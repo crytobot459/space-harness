@@ -1,0 +1,11 @@
+node_modules/
+.DS_Store
+*.log
+
+# Local measurement output. The script ships; your numbers stay local.
+baseline-*.json
+baseline-*.txt
+.space/
+
+# Runtime state written by the plugin
+.health.json

@@ -1,0 +1,39 @@
+{
+  "name": "opencode-harness-kit",
+  "version": "0.1.0",
+  "description": "Model-agnostic harness kit for OpenCode: capability profiles, role-based reasoning effort, context pruning, and measured baselines.",
+  "license": "MIT",
+  "type": "module",
+  "bin": {
+    "oc-harness": "./bin/oc-harness.mjs"
+  },
+  "files": [
+    "bin/",
+    "src/",
+    "profiles/",
+    "examples/",
+    "retention.yml",
+    "GLOBAL.md",
+    "agents/",
+    "skills/"
+  ],
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "node --test test/",
+    "baseline": "node bin/baseline.mjs"
+  },
+  "keywords": [
+    "opencode",
+    "opencode-plugin",
+    "agent",
+    "harness",
+    "context-management"
+  ],
+  "peerDependencies": {
+    "@opencode-ai/plugin": ">=1.18.0"
+  },
+  "devDependencies": {
+    "@opencode-ai/plugin": "^1.18.31",
+    "typescript": "^5.6.0"
+  }
+}
