@@ -50,12 +50,12 @@ export const BASH_DENYLIST = [
 ]
 
 /** Roles the kit writes, with the permissions that keep them honest. */
-const AGENT_PERMISSIONS = {
+const AGENT_PERMISSIONS = /** @type {Record<string, Record<string, string>>} */ ({
   plan: { edit: "deny" },
   reviewer: { edit: "deny" },
   scout: { edit: "deny", bash: "deny" },
   verify: { edit: "deny" },
-}
+})
 
 /**
  * @param {Profile} p

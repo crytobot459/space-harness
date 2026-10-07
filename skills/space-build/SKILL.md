@@ -1,0 +1,37 @@
+---
+name: space-build
+description: Implement one planned task and verify it with a real command. Use when the plan is settled and files need to change.
+---
+
+# Build one task, then prove it
+
+## Steps
+
+1. **Read the whole file before editing it.** Not a grep hit, the file. Partial
+   reads produce edits that contradict code you did not see.
+2. **Make the smallest change** that satisfies the task. If the task is bigger
+   than it looks, stop and say so rather than quietly expanding it.
+3. **Run the verify command the plan named.** That command, not a different one,
+   not a subset.
+4. **On failure, read the actual message.** Not the last ten lines, the error.
+   Fix the cause, then run it again. The third identical attempt is a signal to
+   stop and report.
+5. **Report the command and its verbatim output.**
+
+## Test-first when the plan called for it
+
+If the plan said test first, write the failing test and watch it fail. A test
+that has never failed has not been shown to test anything.
+
+## Never
+
+- Leave a `TODO`, a stub, or a commented-out block for later. Partial work
+  reported as complete is the failure mode this exists to prevent.
+- Widen the task. A drive-by refactor belongs in its own plan.
+- Skip a failing test to get to green. Report it.
+- Claim a result you did not run.
+
+## Handing back
+
+Which task, which command, which result. If anything is unfinished, list it
+explicitly rather than letting the review step find it.

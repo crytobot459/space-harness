@@ -38,6 +38,29 @@ models:
     verified: 2026-10-07
     source: https://opencode.ai/docs/zen
 
+  # The two entries below are not named individually in the Privacy section.
+  # They fall under the general policy - providers follow zero-retention and do
+  # not train on your data, with a named exception list - so this is inferred
+  # from that list rather than quoted. Re-check before relying on it for
+  # anything sensitive.
+
+  opencode/x-preview-f-free:
+    retention: zero-retention
+    note: >-
+      Not named in the Privacy exception list, so the general zero-retention
+      policy applies. Inferred, not quoted.
+    verified: 2026-10-07
+    source: https://opencode.ai/docs/zen
+
+  opencode/deepseek-v4-flash-free:
+    retention: zero-retention
+    note: >-
+      Not named in the Privacy exception list, so the general zero-retention
+      policy applies. Inferred, not quoted. This route is also documented as
+      returning 429 for extended periods, so see docs/KNOWN-LIMITS.md.
+    verified: 2026-10-07
+    source: https://opencode.ai/docs/zen
+
   opencode/muse-spark-1.3-contributor-free:
     retention: may-train
     note: >-

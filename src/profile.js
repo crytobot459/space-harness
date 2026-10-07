@@ -47,6 +47,7 @@ export function profileDirs() {
   return [join(ROOT, "profiles"), join(ROOT, "examples")]
 }
 
+/** @param {string} id @returns {string | null} */
 export function profilePath(id) {
   for (const dir of profileDirs()) {
     const full = join(dir, `${id}.json`)
@@ -79,7 +80,8 @@ export function loadProfile(id) {
   try {
     raw = JSON.parse(readFileSync(path, "utf8"))
   } catch (err) {
-    throw new ProfileError(`cannot read ${path}: ${err.message}`)
+    const msg = err instanceof Error ? err.message : String(err)
+    throw new ProfileError(`cannot read ${path}: ${msg}`)
   }
   validate(raw, path)
   return normalize(raw)
@@ -151,6 +153,7 @@ const CANON = ["none", "minimal", "low", "medium", "high", "xhigh", "max"]
  * @returns {string | null}
  */
 export function resolveEffort(levels, requested) {
+  /** @type {string | null} */
   if (!requested) return null
   if (!levels || levels.length === 0) return null
   if (levels.includes(requested)) return requested
@@ -181,7 +184,7 @@ export function resolveEffort(levels, requested) {
  */
 export function resolveRoles(p) {
   const levels = p.effort?.levels ?? []
-  const out = {}
+  const out = /** @type {Record<string, string | null>} */ ({})
   for (const [role, want] of Object.entries(p.roles ?? {})) {
     out[role] = resolveEffort(levels, want)
   }
@@ -204,7 +207,10 @@ export function reservedTokens(p) {
   return Math.max(8000, Math.round(input * share))
 }
 
-/** Context budget above which pruning should already be working. */
+/**
+ * Context budget above which pruning should already be working.
+ * @param {Profile} p @returns {number}
+ */
 export function pruneThreshold(p) {
   return (p.limits.input ?? p.limits.context) - reservedTokens(p)
 }
@@ -235,10 +241,11 @@ export function loadRetention() {
       i++
       continue
     }
-    // A model key sits at two-space indent under `models:`.
+    // A model key sits at two-space indent under `models:`. Keys are written
+    // provider-qualified already, so do not re-prefix them.
     if (indent === 2 && line.endsWith(":")) {
       const key = line.slice(0, -1).trim()
-      current = `opencode/${key}`
+      current = key.includes("/") ? key : `opencode/${key}`
       out[current] = { retention: "unknown" }
       i++
       continue
@@ -281,8 +288,10 @@ export function loadRetention() {
 
 /**
  * Retention as declared in retention.yml, which wins over the profile copy.
+ * Accepts either a bare profile id or an already-qualified provider/model.
  * @param {string} id @returns {RetentionRecord | undefined}
  */
 export function retentionFor(id) {
-  return loadRetention()[`opencode/${id}`]
+  const table = loadRetention()
+  return table[id] ?? table[id.includes("/") ? id : `opencode/${id}`]
 }
