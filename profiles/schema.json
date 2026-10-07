@@ -1,0 +1,132 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://github.com/anomalyco/opencode-harness-kit/profiles/schema.json",
+  "title": "OpenCode harness profile",
+  "description": "Everything that changes when you change model. Plugins read this file and contain no model names of their own.",
+  "type": "object",
+  "required": ["id", "provider", "model", "retention", "limits", "effort", "roles"],
+  "additionalProperties": false,
+  "properties": {
+    "id": {
+      "type": "string",
+      "description": "Slug used as the profile filename and the oc-harness use argument."
+    },
+    "title": { "type": "string" },
+    "provider": {
+      "type": "string",
+      "description": "opencode provider id, e.g. opencode, opencode-go, anthropic."
+    },
+    "model": {
+      "type": "string",
+      "description": "Model id without the provider prefix, e.g. space-bunny-free."
+    },
+    "family": {
+      "type": ["string", "null"],
+      "description": "Model family for grouping. Stealth models report null upstream, so this may be set by hand."
+    },
+    "verified": {
+      "type": "string",
+      "description": "ISO date a human checked this profile against live metadata."
+    },
+    "retention": {
+      "enum": ["zero-retention", "may-train", "unknown"],
+      "description": "Must match an entry in retention.yml. A profile whose model is unknown there cannot become the default."
+    },
+    "notes": { "type": "string" },
+    "limits": {
+      "type": "object",
+      "required": ["context", "output"],
+      "additionalProperties": false,
+      "description": "Token ceilings from the provider catalog. `input` is absent for several Zen models, in which case the loader derives it from `context`.",
+      "properties": {
+        "context": { "type": "integer", "minimum": 1 },
+        "input": { "type": "integer", "minimum": 1 },
+        "output": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "supports": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Capability flags. Missing or false means do not emit the related config.",
+      "properties": {
+        "reasoning": { "type": "boolean" },
+        "temperature": { "type": "boolean" },
+        "toolCall": { "type": "boolean" },
+        "structuredOutput": { "type": "boolean" },
+        "attachment": {
+          "type": "boolean",
+          "description": "Accepts image or video input. Gates screenshot-based verification."
+        }
+      }
+    },
+    "effort": {
+      "type": "object",
+      "description": "Available reasoning levels, lowest to highest. Empty means the model has no tunable effort.",
+      "properties": {
+        "levels": {
+          "type": "array",
+          "items": { "type": "string" },
+          "examples": [["low", "medium", "high", "xhigh", "max"]]
+        },
+        "default": { "type": "string" },
+        "reserveShare": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 0.5,
+          "default": 0.12,
+          "description": "Share of the input ceiling held back for reasoning and tool output growth."
+        }
+      }
+    },
+    "roles": {
+      "type": "object",
+      "description": "Requested effort per agent role. Resolved against effort.levels, never emitted raw.",
+      "additionalProperties": false,
+      "properties": {
+        "plan": { "$ref": "#/definitions/effortRequest" },
+        "build": { "$ref": "#/definitions/effortRequest" },
+        "reviewer": { "$ref": "#/definitions/effortRequest" },
+        "scout": { "$ref": "#/definitions/effortRequest" },
+        "verify": { "$ref": "#/definitions/effortRequest" }
+      }
+    },
+    "prune": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Deterministic context pruning. Only used when a model-driven compressor is unavailable or unproven.",
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "keepRecentToolCalls": {
+          "type": "integer",
+          "minimum": 1,
+          "default": 6,
+          "description": "Verbatim tool outputs kept at the tail."
+        },
+        "keepRecentTurns": {
+          "type": "integer",
+          "minimum": 1,
+          "default": 3,
+          "description": "Trailing turns whose text and reasoning stay verbatim."
+        },
+        "keepUserMessages": {
+          "type": "boolean",
+          "default": true,
+          "description": "Never stub a user message. Their instructions are the point of the session."
+        }
+      }
+    },
+    "fallback": {
+      "type": "array",
+      "description": "Ordered profile ids to fall back to. Selection happens at session start, not mid-session: no opencode plugin hook can change a live session's model.",
+      "items": { "type": "string" }
+    }
+  },
+  "definitions": {
+    "effortRequest": {
+      "oneOf": [
+        { "type": "string", "description": "Desired level, resolved to the nearest available one." },
+        { "type": "null", "description": "This role should not set a variant at all." }
+      ]
+    }
+  }
+}

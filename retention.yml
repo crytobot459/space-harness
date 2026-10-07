@@ -1,0 +1,87 @@
+# Data retention and privacy, curated by hand.
+#
+# models.dev describes capability and price. It does NOT describe what a
+# provider does with your prompts. That gap is why this file exists: the most
+# consequential choice in a coding agent is often invisible in the metadata.
+#
+# Values:
+#   zero-retention  provider keeps nothing, no training
+#   may-train       prompts and/or completions may be used to improve the model
+#   unknown         not verified here; `oc-harness use` refuses to make it a
+#                   default until a human fills this in
+#
+# Sources: https://opencode.ai/docs/zen (Privacy section). Re-verify on their
+# release notes; terms change without a model rename.
+
+defaults:
+  unknown: unknown
+
+models:
+  opencode/space-bunny-free:
+    retention: zero-retention
+    note: >-
+      "Its provider follows a zero-retention policy and does not use your data
+      for model training." Free for a limited time; stealth model with no public
+      identity.
+    verified: 2026-10-07
+    source: https://opencode.ai/docs/zen
+
+  opencode/space-bunny:
+    retention: zero-retention
+    note: Same provider as space-bunny-free, paid route on the Go plan.
+    verified: 2026-10-07
+    source: https://opencode.ai/docs/zen
+
+  opencode/longcat-2.5-preview-free:
+    retention: zero-retention
+    note: "free on OpenCode for a limited time. Its provider follows a zero-retention policy."
+    verified: 2026-10-07
+    source: https://opencode.ai/docs/zen
+
+  opencode/muse-spark-1.3-contributor-free:
+    retention: may-train
+    note: >-
+      "Heavily discounted token pricing in exchange for permission to use your
+      prompts and completions to train future Meta models." 1M context, but its
+      top reasoning effort is xhigh, not max. Kept as an example of a
+      capability/privacy tradeoff, never as a default for private code.
+    verified: 2026-10-07
+    source: https://opencode.ai/docs/zen
+
+  opencode/muse-spark-1.3:
+    retention: may-train
+    note: Same Meta contributor terms as the free variant.
+    verified: 2026-10-07
+    source: https://opencode.ai/docs/zen
+
+  opencode/big-pickle:
+    retention: may-train
+    note: "collected data may be used to improve the model" during its free period.
+    verified: 2026-10-07
+    source: https://opencode.ai/docs/zen
+
+  opencode/exo-free:
+    retention: may-train
+    note: "collected data may be used to improve the model" during its free period.
+    verified: 2026-10-07
+    source: https://opencode.ai/docs/zen
+
+  opencode/fledge-alpha-free:
+    retention: may-train
+    note: "collected data may be used to improve the model" during its free period.
+    verified: 2026-10-07
+    source: https://opencode.ai/docs/zen
+
+  opencode/mimo-v2.5-free:
+    retention: may-train
+    note: "collected data may be used to improve the model" during its free period.
+    verified: 2026-10-07
+    source: https://opencode.ai/docs/zen
+
+  opencode/nemotron-3-ultra-free:
+    retention: may-train
+    note: >-
+      NVIDIA free trial endpoints. Trial use only, do not submit personal or
+      confidential data; sessions are logged.
+    verified: 2026-10-07
+    source: https://opencode.ai/docs/zen

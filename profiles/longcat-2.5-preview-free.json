@@ -1,0 +1,41 @@
+{
+  "$comment": "Fallback tier 2. No tunable reasoning effort at all, so the loader omits `variant` entirely for this profile rather than guessing a level.",
+  "id": "longcat-2.5-preview-free",
+  "title": "LongCat 2.5 Preview Free (OpenCode Zen)",
+  "provider": "opencode",
+  "model": "longcat-2.5-preview-free",
+  "family": "longcat",
+  "verified": "2026-10-07",
+  "retention": "zero-retention",
+  "notes": "Zero-retention with a 1M context, but reasoning_options is null upstream: the model has one fixed effort. Any role requesting a level resolves to null and the generated config leaves variant unset.",
+  "limits": {
+    "context": 1000000,
+    "output": 131072
+  },
+  "supports": {
+    "reasoning": true,
+    "temperature": true,
+    "toolCall": true,
+    "structuredOutput": false,
+    "attachment": true
+  },
+  "effort": {
+    "levels": [],
+    "default": null,
+    "reserveShare": 0.12
+  },
+  "roles": {
+    "plan": null,
+    "build": null,
+    "reviewer": null,
+    "scout": null,
+    "verify": null
+  },
+  "prune": {
+    "enabled": true,
+    "keepRecentToolCalls": 6,
+    "keepRecentTurns": 3,
+    "keepUserMessages": true
+  },
+  "fallback": ["deepseek-v4-flash-free"]
+}

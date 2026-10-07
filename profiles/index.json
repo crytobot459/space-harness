@@ -1,0 +1,60 @@
+{
+  "$comment": "Profiles verified against live provider metadata. `retention` must come from retention.yml; a model missing there cannot enter this list.",
+  "default": "space-bunny-free",
+  "profiles": [
+    {
+      "id": "space-bunny-free",
+      "file": "profiles/space-bunny-free.json",
+      "title": "Space Bunny Free",
+      "retention": "zero-retention",
+      "free": true,
+      "topEffort": "max",
+      "context": 1048576,
+      "default": true,
+      "note": "Only free Zen model with a max effort and zero-retention terms."
+    },
+    {
+      "id": "x-preview-f-free",
+      "file": "profiles/x-preview-f-free.json",
+      "title": "x-preview-f Free",
+      "retention": "zero-retention",
+      "free": true,
+      "topEffort": "max",
+      "context": 1000000,
+      "default": false,
+      "note": "Three effort levels only; no medium or xhigh."
+    },
+    {
+      "id": "longcat-2.5-preview-free",
+      "file": "profiles/longcat-2.5-preview-free.json",
+      "title": "LongCat 2.5 Preview Free",
+      "retention": "zero-retention",
+      "free": true,
+      "topEffort": null,
+      "context": 1000000,
+      "default": false,
+      "note": "No tunable reasoning effort."
+    },
+    {
+      "id": "deepseek-v4-flash-free",
+      "file": "profiles/deepseek-v4-flash-free.json",
+      "title": "DeepSeek V4 Flash Free",
+      "retention": "zero-retention",
+      "free": true,
+      "topEffort": "max",
+      "context": 200000,
+      "default": false,
+      "note": "200k context, text only."
+    }
+  ],
+  "excluded": [
+    {
+      "id": "muse-spark-1.3-contributor-free",
+      "file": "examples/muse-spark-1.3-contributor-free.json",
+      "title": "Muse Spark 1.3 Contributor Free",
+      "retention": "may-train",
+      "reason": "Provider may train on your prompts and completions (Meta contributor tier). Top effort is xhigh, not max.",
+      "installable": true
+    }
+  ]
+}
