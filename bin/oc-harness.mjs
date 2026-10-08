@@ -11,7 +11,7 @@
 // The point of the kit: switching models is a data edit, not a code change.
 // Everything model-specific lives in profiles/<id>.json.
 
-import { readFileSync, writeFileSync, existsSync, mkdirSync } from "node:fs"
+import { readFileSync, writeFileSync, existsSync, mkdirSync, rmSync, symlinkSync } from "node:fs"
 import { homedir } from "node:os"
 import { dirname, join } from "node:path"
 import { execFileSync } from "node:child_process"
@@ -20,6 +20,7 @@ import {
   loadProfile,
   loadRetention,
   listProfileIds,
+  profilePath,
   pruneThreshold,
   reservedTokens,
   resolveDefaultVariant,
@@ -32,6 +33,7 @@ import { planEffort } from "../src/effort.js"
 const CONFIG_DIR =
   process.env.OPENCODE_CONFIG_DIR ?? join(homedir(), ".config/opencode")
 const CONFIG_FILE = join(CONFIG_DIR, "opencode.jsonc")
+const ROOT = import.meta.dirname ? join(import.meta.dirname, "..") : process.cwd()
 
 const args = process.argv.slice(2)
 const cmd = args[0] ?? "list"
@@ -153,6 +155,33 @@ function cmdShow(id) {
   console.log()
 }
 
+/**
+ * Link the built plugin into ~/.config/opencode/plugins so opencode loads it
+ * without an npm install. This is the path to use while developing, and it
+ * means the kit is usable before anything is published.
+ */
+function cmdLink() {
+  const dist = join(ROOT, "dist", "index.js")
+  if (!existsSync(dist)) {
+    fail("dist/index.js missing. Run: npm run build")
+  }
+  const dir = join(CONFIG_DIR, "plugins")
+  mkdirSync(dir, { recursive: true })
+  const target = join(dir, "opencode-harness-kit.js")
+  try {
+    rmSync(target, { force: true })
+  } catch {
+    // Fresh symlink.
+  }
+  // A relative link survives the package moving or being reinstalled.
+  symlinkSync(join("..", "..", "..", "harness", "space-harness", "dist", "index.js"), target)
+  console.log(`\n  ${green("✓")} linked ${target}`)
+  console.log(
+    `  ${stamp("opencode loads ~/.config/opencode/plugins automatically")}\n` +
+      `  ${stamp("restart opencode, then: opencode debug config")}\n`,
+  )
+}
+
 function cmdUse(id) {
   if (!id) fail("usage: oc-harness use <profile> [--print] [--yes]")
   const p = loadProfile(id)
@@ -214,18 +243,111 @@ function stripComments(text) {
   }
 }
 
-/** Re-check every profile against the live provider catalog. */
-async function cmdDoctor() {
+/** Re-fetch models.dev and report which profiles have drifted from it. */
+async function fetchCatalog() {
   const url = "https://models.dev/api.json"
-  let catalog
   try {
-    catalog = JSON.parse(execFileSync("curl", ["-sL", "--max-time", "40", url], {
-      encoding: "utf8",
-      maxBuffer: 64 * 1024 * 1024,
-    }))
+    return JSON.parse(
+      execFileSync("curl", ["-sL", "--max-time", "40", url], {
+        encoding: "utf8",
+        maxBuffer: 64 * 1024 * 1024,
+      }),
+    )
   } catch (err) {
     fail(`could not reach ${url}: ${err.message}`)
   }
+}
+
+function diffProfile(p, live) {
+  const issues = []
+  const liveLimits = live.limit ?? {}
+  if ((liveLimits.context ?? 0) !== p.limits.context) {
+    issues.push(`context ${p.limits.context} -> ${liveLimits.context}`)
+  }
+  if ((liveLimits.output ?? 0) !== p.limits.output) {
+    issues.push(`output ${p.limits.output} -> ${liveLimits.output}`)
+  }
+  if ((liveLimits.input ?? liveLimits.context) !== (p.limits.input ?? p.limits.context)) {
+    issues.push(`input ${p.limits.input} -> ${liveLimits.input ?? liveLimits.context}`)
+  }
+  const liveLevels = live.reasoning_options?.find((r) => r.type === "effort")?.values ?? []
+  if (JSON.stringify(liveLevels) !== JSON.stringify(p.effort?.levels ?? [])) {
+    issues.push(`effort [${(p.effort?.levels ?? []).join(",")}] -> [${liveLevels.join(",")}]`)
+  }
+  if (Boolean(live.temperature) !== Boolean(p.supports?.temperature)) {
+    issues.push(`temperature ${p.supports?.temperature} -> ${Boolean(live.temperature)}`)
+  }
+  if (Boolean(live.attachment) !== Boolean(p.supports?.attachment)) {
+    issues.push(`attachment ${p.supports?.attachment} -> ${Boolean(live.attachment)}`)
+  }
+  return issues
+}
+
+/**
+ * Refresh capability fields from live metadata.
+ *
+ * Only machine-derived fields are rewritten. `retention`, `notes`, `roles` and
+ * the fallback queue are human judgements and are never touched by a script:
+ * losing a privacy verdict to an automated rewrite would be worse than drift.
+ */
+async function cmdRefresh(id) {
+  const path = profilePath(id)
+  if (!path) fail(`no profile named "${id}"`)
+  const catalog = await fetchCatalog()
+  const p = JSON.parse(readFileSync(path, "utf8"))
+  const live = catalog?.[p.provider]?.models?.[p.model]
+
+  if (!live) {
+    fail(
+      `${p.provider}/${p.model} is no longer in models.dev.\n` +
+        `  It may have been withdrawn from the provider. Remove the profile, or\n` +
+        `  keep it and set retention to reflect the current terms.`,
+    )
+  }
+
+  const before = diffProfile(p, live)
+  if (before.length === 0) {
+    console.log(`\n  ${green("✓")} ${id} already matches live metadata\n`)
+    return
+  }
+
+  p.limits = {
+    ...p.limits,
+    context: live.limit?.context ?? p.limits.context,
+    output: live.limit?.output ?? p.limits.output,
+  }
+  // Many providers publish no separate input ceiling; drop ours so the loader
+  // derives it from context rather than pinning a stale number.
+  if (live.limit?.input) p.limits.input = live.limit.input
+  else delete p.limits.input
+
+  const levels = live.reasoning_options?.find((r) => r.type === "effort")?.values ?? []
+  p.effort = {
+    ...p.effort,
+    levels,
+    default: levels.includes(p.effort?.default) ? p.effort.default : levels[levels.length - 1] ?? null,
+  }
+  p.supports = {
+    ...p.supports,
+    reasoning: Boolean(live.reasoning),
+    temperature: Boolean(live.temperature),
+    toolCall: Boolean(live.tool_call),
+    structuredOutput: Boolean(live.structured_output),
+    attachment: Boolean(live.attachment),
+  }
+  p.verified = new Date().toISOString().slice(0, 10)
+
+  writeFileSync(path, `${JSON.stringify(p, null, 2)}\n`)
+  console.log(`\n  ${green("✓")} refreshed ${path}`)
+  for (const line of before) console.log(`      ${line}`)
+  console.log(
+    `\n  ${stamp("kept as-is: retention, roles, notes, fallback (human judgement)")}\n`,
+  )
+}
+
+/** Re-check every profile against the live provider catalog. */
+async function cmdDoctor() {
+  const catalog = await fetchCatalog()
   const retention = loadRetention()
   const ids = listProfileIds()
   let problems = 0
@@ -248,29 +370,7 @@ async function cmdDoctor() {
       continue
     }
 
-    const issues = []
-    const liveLimits = live.limit ?? {}
-    if ((liveLimits.context ?? 0) !== p.limits.context) {
-      issues.push(`context ${p.limits.context} -> ${liveLimits.context}`)
-    }
-    if ((liveLimits.output ?? 0) !== p.limits.output) {
-      issues.push(`output ${p.limits.output} -> ${liveLimits.output}`)
-    }
-    if ((liveLimits.input ?? liveLimits.context) !== (p.limits.input ?? p.limits.context)) {
-      issues.push(`input ${p.limits.input} -> ${liveLimits.input ?? liveLimits.context}`)
-    }
-    const liveLevels =
-      live.reasoning_options?.find((r) => r.type === "effort")?.values ?? []
-    const want = p.effort?.levels ?? []
-    if (JSON.stringify(liveLevels) !== JSON.stringify(want)) {
-      issues.push(`effort [${want.join(",")}] -> [${liveLevels.join(",")}]`)
-    }
-    if (Boolean(live.temperature) !== Boolean(p.supports?.temperature)) {
-      issues.push(`temperature ${p.supports?.temperature} -> ${Boolean(live.temperature)}`)
-    }
-    if (Boolean(live.attachment) !== Boolean(p.supports?.attachment)) {
-      issues.push(`attachment ${p.supports?.attachment} -> ${Boolean(live.attachment)}`)
-    }
+    const issues = diffProfile(p, live)
     const ret = retention[`${p.provider}/${p.model}`]
     if (p.retention === "zero-retention" && ret?.retention === "may-train") {
       issues.push(red("retention.yml now says may-train"))
@@ -282,11 +382,12 @@ async function cmdDoctor() {
       problems++
       console.log(`  ${yellow("!")} ${id.padEnd(32)} ${yellow("drift")}`)
       for (const i of issues) console.log(`      ${i}`)
+      console.log(`      ${stamp(`fix: oc-harness use ${id} --refresh`)}`)
     }
   }
   console.log(
     problems
-      ? `\n  ${yellow(`${problems} profile(s) drifted`)} - update the profile or refresh it\n`
+      ? `\n  ${yellow(`${problems} profile(s) drifted`)}\n`
       : `\n  ${green("all profiles match live metadata")}\n`,
   )
 }
@@ -307,6 +408,12 @@ try {
     case "show":
       cmdShow(args[1])
       break
+    case "refresh":
+      await cmdRefresh(args[1])
+      break
+    case "link":
+      cmdLink()
+      break
     case "doctor":
       await cmdDoctor()
       break
@@ -321,6 +428,8 @@ try {
     list      show profiles with retention and caveats
     use <id>  compile a profile into ${CONFIG_FILE}
     show <id> print the resolved effort plan and derived numbers
+    refresh <id>  update capability fields from models.dev
+    link          symlink the built plugin into ~/.config/opencode/plugins
     doctor    re-check profiles against models.dev
     baseline  measure the current opencode install
 

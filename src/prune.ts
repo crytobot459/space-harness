@@ -116,9 +116,13 @@ export const PrunePlugin: Plugin = async ({ worktree, $ }) => {
         const floor = Math.max(0, messages.length - 1 - keepTurns)
 
         // Walk backwards collecting tool parts to preserve verbatim.
+        // Walk backwards from the end until keepCalls tool parts are collected.
+        // This is deliberately not bounded by `floor`: how many recent calls
+        // stay verbatim and which turns are prunable are independent limits,
+        // and a call can be both recent and inside the prunable span.
         const keepToolMessageIds = new Set<string>()
         let seen = 0
-        for (let i = messages.length - 1; i >= floor && seen < keepCalls; i--) {
+        for (let i = messages.length - 1; i >= 0 && seen < keepCalls; i--) {
           const msg = messages[i]
           if (!msg?.parts) continue
           for (const part of msg.parts) {
@@ -149,7 +153,7 @@ export const PrunePlugin: Plugin = async ({ worktree, $ }) => {
               stats.kept++
               continue
             }
-            if (i > floor && keepToolMessageIds.has(msg.info?.id ?? String(i))) {
+            if (keepToolMessageIds.has(msg.info?.id ?? String(i))) {
               stats.bytesAfter += size
               stats.kept++
               continue

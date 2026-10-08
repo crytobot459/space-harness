@@ -19,7 +19,13 @@
 import type { Plugin } from "@opencode-ai/plugin"
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs"
 import { join } from "node:path"
-import { loadProfile, pruneThreshold, reservedTokens, resolveEffort } from "./profile.js"
+import {
+  loadProfile,
+  pruneThreshold,
+  profileIdFromConfig,
+  reservedTokens,
+  resolveEffort,
+} from "./profile.js"
 
 interface Health {
   unhealthy: Record<string, { at: string; reason: string }>
@@ -80,8 +86,11 @@ export const RouterPlugin: Plugin = async ({ worktree }) => {
         const cfg = config as Record<string, any>
         const health = readHealth(worktree)
 
-        if (cfg.harness?.profile) {
-          const id: string = cfg.harness.profile
+        // config.harness is stripped by schema validation, so the active
+        // profile comes from the config file on disk.
+        const activeId = cfg.harness?.profile ?? profileIdFromConfig()
+        if (activeId) {
+          const id: string = activeId
           const mark = health.unhealthy[`opencode/${id}`]
           if (mark) {
             // Walk the queue for the first profile that is not marked down.

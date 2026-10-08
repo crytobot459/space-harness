@@ -9,3 +9,6 @@ baseline-*.txt
 
 # Runtime state written by the plugin
 .health.json
+
+# eval scratch
+.space-eval/

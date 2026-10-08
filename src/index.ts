@@ -1,11 +1,14 @@
 // Plugin entry point.
 //
-// Each concern lives in its own module so a project can install the ones it
-// wants. The shared core is plain JS with JSDoc types, which lets the CLI run
-// under node while opencode loads the TypeScript hooks.
+// IMPORTANT: opencode treats every exported function in this module as a plugin
+// and calls it with the plugin input. A library re-exported from here is not a
+// plugin, so calling it produces something like "result.model of undefined" at
+// load time. Only plugin functions belong in this file; the library lives in
+// src/lib.ts and is imported directly by the CLI and the tests.
 //
-// Nothing here names a model. Which model is in use, what effort each role
-// gets, and how much context to reserve all come from a profile.
+// Each concern lives in its own module so a project can install only the ones
+// it wants. Nothing here names a model: which model is in use, what effort each
+// role gets, and how much context to reserve all come from a profile.
 
 import { mkdirSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
@@ -15,10 +18,10 @@ import { PrunePlugin } from "./prune.js"
 import { RouterPlugin } from "./router.js"
 import { TelemetryPlugin } from "./telemetry.js"
 import { applyEffort, planEffort } from "./effort.js"
-import { listProfileIds, loadProfile } from "./profile.js"
+import { profileIdFromConfig } from "./profile.js"
 
 export interface HarnessOptions {
-  /** Profile id. Defaults to the one marked default in profiles/index.json. */
+  /** Profile id. Defaults to the one recorded in the config by `oc-harness use`. */
   profile?: string
   /** Load a subset. Defaults to all four. */
   only?: Array<"guard" | "prune" | "router" | "telemetry">
@@ -50,16 +53,19 @@ export const HarnessPlugin: Plugin = async (ctx, options?: HarnessOptions) => {
   }
 
   // Effort assignment belongs to the config hook, which runs once at startup.
-  // Chain it after the router so a failover profile wins.
+  // Chained after the router so a failover profile wins.
   const routerConfig = merged["config"]
   merged["config"] = async (config: any) => {
     if (routerConfig) await routerConfig(config)
-    const id = opts.profile ?? config?.harness?.profile
+    // config.harness is unreliable here: OpenCode validates the config against a
+    // schema with additionalProperties false, so our custom key never reaches
+    // the hook. The config file does, so read the id from there.
+    const id = opts.profile ?? config?.harness?.profile ?? profileIdFromConfig()
     if (!id) return
     try {
       applyEffort(config, planEffort(id))
-      // Record it where the prune hook can find it, so pruning picks up this
-      // profile's thresholds without needing access to the resolved config.
+      // Record it where the prune hook looks, so pruning picks up this
+      // profile's thresholds without access to the resolved config.
       const dir = join(ctx.worktree, ".space")
       mkdirSync(dir, { recursive: true })
       writeFileSync(join(dir, "active"), `${id}\n`)
@@ -72,7 +78,3 @@ export const HarnessPlugin: Plugin = async (ctx, options?: HarnessOptions) => {
 }
 
 export default HarnessPlugin
-
-export { listProfileIds, loadProfile }
-export { planEffort, applyEffort } from "./effort.js"
-export { resolveEffort, pruneThreshold, reservedTokens } from "./profile.js"

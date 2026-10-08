@@ -47,28 +47,27 @@ export const TelemetryPlugin: Plugin = async ({ worktree }) => {
 
   return {
     event: async ({ event }) => {
-      const type = (event as { type?: string }).type
-      if (!type) return
+      // Events are provider-specific and opencode may add shapes we have never
+      // seen. Anything unrecognised is ignored rather than trusted.
+      const type = (event as { type?: unknown } | undefined)?.type
+      if (typeof type !== "string") return
 
       // Provider rate limits are the one signal that changes behaviour, so
       // they get logged even though the event shape is provider-specific.
-      if (type.includes("error") || type.includes("rate")) {
-        write(dir, { kind: "provider-event", type, detail: truncate(JSON.stringify(event)) })
-        return
+      if (/error|rate|limit|quota/i.test(type)) {
+        write(dir, { kind: "provider-event", type, detail: truncate(safeStringify(event)) })
       }
     },
 
     "tool.execute.after": async (input, output) => {
-      const denied = output.output.includes("[opencode-harness-kit] blocked")
-      if (denied) {
-        write(dir, {
-          kind: "guard",
-          tool: input.tool,
-          rule: extractRule(output.output),
-        })
+      const text = typeof output?.output === "string" ? output.output : ""
+      if (text.includes("[opencode-harness-kit] blocked")) {
+        write(dir, { kind: "guard", tool: input.tool, rule: extractRule(text) })
+        return
       }
-      if (input.tool === "bash" && /git push|rm -rf|chmod 777/.test(String((input.args as any)?.command ?? ""))) {
-        write(dir, { kind: "guard-attempt", tool: input.tool, command: truncate(String((input.args as any)?.command ?? "")) })
+      const command = String((input.args as { command?: unknown })?.command ?? "")
+      if (input.tool === "bash" && /git push|rm -rf|chmod 777/.test(command)) {
+        write(dir, { kind: "guard-attempt", tool: input.tool, command: truncate(command) })
       }
     },
 
@@ -85,6 +84,15 @@ function extractRule(output: string): string {
 
 function truncate(s: string, n = 300): string {
   return s.length > n ? `${s.slice(0, n)}...` : s
+}
+
+/** Stringify without throwing on a cycle or a BigInt. */
+function safeStringify(value: unknown): string {
+  try {
+    return JSON.stringify(value) ?? String(value)
+  } catch {
+    return String(value)
+  }
 }
 
 export default TelemetryPlugin

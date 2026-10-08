@@ -1,0 +1,384 @@
+// Integration: load the built plugin the way opencode does and drive its hooks
+// with realistic payloads.
+//
+// The type checker cannot catch a wrong hook signature, a missing `await`, or a
+// field that does not exist on a message part. Only calling the hooks can. If
+// this file is skipped, nothing has ever verified the plugin actually runs.
+
+import { test } from "node:test"
+import assert from "node:assert/strict"
+import { execFileSync } from "node:child_process"
+import { mkdirSync, writeFileSync, rmSync, existsSync, readFileSync } from "node:fs"
+import { join } from "node:path"
+import { tmpdir } from "node:os"
+
+// Isolate from the developer's real opencode config. Without this, a test that
+// omits an explicit profile would read whatever happens to be installed, and
+// would fail on a clean CI runner.
+const SANDBOX_CONFIG = join(tmpdir(), `ock-config-${process.pid}`)
+mkdirSync(SANDBOX_CONFIG, { recursive: true })
+writeFileSync(
+  join(SANDBOX_CONFIG, "opencode.jsonc"),
+  '{\n  "model": "opencode/space-bunny-free",\n  "harness": { "profile": "space-bunny-free" }\n}\n',
+)
+process.env.OPENCODE_CONFIG_DIR = SANDBOX_CONFIG
+process.on("exit", () => rmSync(SANDBOX_CONFIG, { recursive: true, force: true }))
+
+const ROOT = new URL("..", import.meta.url).pathname
+const DIST = join(ROOT, "dist", "index.js")
+
+function ensureBuild() {
+  if (!existsSync(DIST)) {
+    execFileSync("bun", ["build", "src/index.ts", "--outdir", "dist", "--target", "node", "--format", "esm"], {
+      cwd: ROOT,
+      stdio: "ignore",
+    })
+  }
+}
+
+ensureBuild()
+
+/** A minimal but structurally faithful stand-in for opencode's plugin input. */
+function ctx(worktree) {
+  return {
+    client: { app: { get: async () => ({}), log: { on: async () => {} } } },
+    project: { id: "test", worktree, vcs: "git" },
+    directory: worktree,
+    worktree,
+    serverUrl: new URL("http://127.0.0.1:0"),
+    $: Object.assign(() => ({ pipe: () => ({}) }), {
+      env: () => process.env,
+      cwd: async () => worktree,
+    }),
+    experimental_workspace: { register: () => {} },
+  }
+}
+
+const hookInput = {
+  tool: "bash",
+  sessionID: "ses_test",
+  callID: "call_1",
+}
+
+/** opencode-shaped assistant message with a completed tool part. */
+function toolMessage(id, role, tool, output, extra = {}) {
+  return {
+    info: { id, role, time: { created: 1789000000000 } },
+    parts: [
+      {
+        id: `prt_${id}_step`,
+        sessionID: "ses_test",
+        messageID: id,
+        type: "step-start",
+      },
+      {
+        id: `prt_${id}_tool`,
+        sessionID: "ses_test",
+        messageID: id,
+        type: "tool",
+        callID: `call_${id}`,
+        tool,
+        state: {
+          status: "completed",
+          input: tool === "bash" ? { command: "pytest -q" } : { filePath: "src/a.py" },
+          output,
+          title: tool,
+          metadata: {},
+          time: { start: 1789000000000, end: 1789000001000 },
+        },
+      },
+      ...(extra.parts ?? []),
+    ],
+  }
+}
+
+function userMessage(id, text) {
+  return {
+    info: { id, role: "user", time: { created: 1789000000000 } },
+    parts: [
+      {
+        id: `prt_${id}`,
+        sessionID: "ses_test",
+        messageID: id,
+        type: "text",
+        text,
+      },
+    ],
+  }
+}
+
+async function harness(worktree, opts) {
+  const { HarnessPlugin } = await import(DIST)
+  return HarnessPlugin(ctx(worktree), opts)
+}
+
+function workspace() {
+  const dir = join(tmpdir(), `ock-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`)
+  mkdirSync(join(dir, ".space"), { recursive: true })
+  return dir
+}
+
+test("the bundle exposes a callable plugin", async () => {
+  assert.ok(existsSync(DIST), "dist/index.js must exist; run npm run build")
+  const dir = workspace()
+  const hooks = await harness(dir)
+  for (const name of [
+    "tool.execute.before",
+    "tool.execute.after",
+    "event",
+    "config",
+    "chat.message",
+  ]) {
+    assert.equal(typeof hooks[name], "function", `missing hook: ${name}`)
+  }
+  rmSync(dir, { recursive: true, force: true })
+})
+
+test("config hook applies the profile's effort to the real config shape", async () => {
+  const dir = workspace()
+  const hooks = await harness(dir)
+  const config = {
+    model: "opencode/space-bunny-free",
+    agent: { build: { model: "opencode/space-bunny-free" } },
+    harness: { profile: "space-bunny-free" },
+  }
+  await hooks.config(config)
+
+  assert.equal(config.agent.plan.variant, "max")
+  assert.equal(config.agent.reviewer.variant, "max")
+  assert.equal(config.agent.build.variant, "high")
+  assert.equal(config.agent.scout.variant, "low")
+  for (const agent of Object.values(config.agent)) {
+    assert.equal(agent.model, "opencode/space-bunny-free")
+  }
+  // The active profile is recorded where the prune hook looks for it.
+  assert.equal(existsSync(join(dir, ".space", "active")), true)
+  rmSync(dir, { recursive: true, force: true })
+})
+
+test("guard denies a destructive command by throwing", async () => {
+  const dir = workspace()
+  const hooks = await harness(dir)
+  await assert.rejects(
+    () => hooks["tool.execute.before"](hookInput, { args: { command: "cd /x && git push" } }),
+    /blocked/,
+  )
+  rmSync(dir, { recursive: true, force: true })
+})
+
+test("guard allows an ordinary command and leaves args untouched", async () => {
+  const dir = workspace()
+  const hooks = await harness(dir)
+  const args = { command: "cd /x && python3 -m pytest -q" }
+  const out = { args }
+  await hooks["tool.execute.before"](hookInput, out)
+  assert.deepEqual(out.args, args)
+  rmSync(dir, { recursive: true, force: true })
+})
+
+test("guard blocks a credential write", async () => {
+  const dir = workspace()
+  const hooks = await harness(dir)
+  await assert.rejects(
+    () =>
+      hooks["tool.execute.before"](
+        { ...hookInput, tool: "write" },
+        { args: { filePath: "/srv/app/.env" } },
+      ),
+    /blocked/,
+  )
+  // The template is ordinary and must not be blocked.
+  await hooks["tool.execute.before"](
+    { ...hookInput, tool: "write" },
+    { args: { filePath: ".env.example" } },
+  )
+  rmSync(dir, { recursive: true, force: true })
+})
+
+test("prune is inert until a profile is active, then it stubs old tool output", async () => {
+  const dir = workspace()
+  const opts = { profile: "space-bunny-free" }
+
+  // No marker yet: prune declines rather than guessing thresholds.
+  const cold = await harness(dir)
+  assert.equal(cold["experimental.chat.messages.transform"], undefined)
+
+  writeFileSync(join(dir, ".space", "active"), "space-bunny-free\n")
+  const hooks = await harness(dir)
+  const transform = hooks["experimental.chat.messages.transform"]
+  assert.equal(typeof transform, "function", "prune should activate with a profile set")
+
+  const messages = []
+  for (let i = 0; i < 12; i++) {
+    messages.push(toolMessage(`m${i}`, "assistant", "bash", "x".repeat(4000)))
+    if (i === 3) messages.push(userMessage(`u${i}`, "please fix the failing test"))
+  }
+  const before = JSON.stringify(messages).length
+
+  const output = { messages }
+  await transform({}, output)
+
+  const after = JSON.stringify(output.messages).length
+  assert.ok(after < before, `expected pruning to cut context, got ${before} -> ${after}`)
+
+  // Invariants that matter.
+  const last = output.messages[output.messages.length - 1]
+  assert.equal(last.parts[1].state.output.length, 4000, "the in-flight turn must be untouched")
+
+  for (const m of output.messages) {
+    if (m.info.role !== "user") continue
+    assert.equal(
+      m.parts[0].text,
+      "please fix the failing test",
+      "user messages must never be stubbed",
+    )
+  }
+
+  const allToolParts = output.messages.flatMap((m) =>
+    m.parts.filter((p) => p.type === "tool"),
+  )
+  const stubbed = allToolParts.filter((p) => p.state?.metadata?.pruned)
+  // The count is the real invariant: everything but the retained tail.
+  assert.equal(stubbed.length, allToolParts.length - 6, `expected all but 6 pruned`)
+  for (const p of stubbed) {
+    assert.equal(p.state.status, "completed", "the state must stay structurally valid")
+    assert.ok(typeof p.state.time.start === "number")
+    assert.ok(typeof p.state.title === "string")
+    assert.ok(p.state.input.command, "the original input is preserved for a re-run")
+    assert.ok(p.state.output.includes("pruned from context"))
+  }
+  rmSync(dir, { recursive: true, force: true })
+})
+
+test("prune keeps the most recent tool calls verbatim", async () => {
+  const dir = workspace()
+  writeFileSync(join(dir, ".space", "active"), "space-bunny-free\n")
+  const hooks = await harness(dir)
+  const messages = []
+  for (let i = 0; i < 10; i++) {
+    messages.push(toolMessage(`m${i}`, "assistant", "bash", `result-${i}`))
+  }
+  await hooks["experimental.chat.messages.transform"]({}, { messages })
+
+  const tail = messages.slice(-6).flatMap((m) => m.parts.filter((p) => p.type === "tool"))
+  assert.equal(tail.length, 6)
+  for (const p of tail) {
+    assert.ok(!p.state.metadata?.pruned, "recent tool output must survive verbatim")
+  }
+  rmSync(dir, { recursive: true, force: true })
+})
+
+test("prune survives a malformed message without throwing", async () => {
+  const dir = workspace()
+  writeFileSync(join(dir, ".space", "active"), "space-bunny-free\n")
+  const hooks = await harness(dir)
+  const output = {
+    messages: [
+      { info: { id: "a", role: "assistant" } }, // no parts
+      { info: { id: "b", role: "assistant" }, parts: [null, { type: "tool" }] },
+      toolMessage("c", "assistant", "bash", "ok"),
+    ],
+  }
+  // Must not throw: a failed prune has to degrade, not break the turn.
+  await hooks["experimental.chat.messages.transform"]({}, output)
+  rmSync(dir, { recursive: true, force: true })
+})
+
+test("telemetry records a denial and never throws on odd input", async () => {
+  const dir = workspace()
+  const hooks = await harness(dir)
+  await hooks["tool.execute.after"](
+    { ...hookInput, args: { command: "git push" } },
+    { title: "bash", output: "[opencode-harness-kit] blocked: git push", metadata: {} },
+  )
+  await hooks["tool.execute.after"](
+    { ...hookInput, args: { command: "ls" } },
+    { title: "bash", output: "a\nb", metadata: {} },
+  )
+  await hooks.event({ event: { type: "something.unknown" } })
+  await hooks.event({ event: undefined })
+  const log = join(dir, ".space", "telemetry.jsonl")
+  assert.ok(existsSync(log), "telemetry should have been written")
+  const lines = readLines(log)
+  assert.ok(lines.some((l) => l.includes("guard")), "the denial should be recorded")
+  rmSync(dir, { recursive: true, force: true })
+})
+
+test("router walks the fallback queue when the active route is marked down", async () => {
+  const dir = workspace()
+  writeFileSync(
+    join(dir, ".space", "health.json"),
+    JSON.stringify({
+      unhealthy: {
+        "opencode/space-bunny-free": { at: "2026-10-07T00:00:00Z", reason: "429" },
+      },
+    }),
+  )
+  const hooks = await harness(dir)
+  const config = { harness: { profile: "space-bunny-free" } }
+  await hooks.config(config)
+  assert.equal(config.model, "opencode/x-preview-f-free", "should move to the next profile")
+  assert.equal(config.harness.profile, "x-preview-f-free")
+  rmSync(dir, { recursive: true, force: true })
+})
+
+test("router leaves the config alone when the preferred route is healthy", async () => {
+  const dir = workspace()
+  const hooks = await harness(dir)
+  const config = { model: "opencode/space-bunny-free", harness: { profile: "space-bunny-free" } }
+  await hooks.config(config)
+  assert.equal(config.harness.profile, "space-bunny-free")
+  rmSync(dir, { recursive: true, force: true })
+})
+
+test("plugins can be selected individually", async () => {
+  const dir = workspace()
+  const guardOnly = await harness(dir, { only: ["guard"] })
+  assert.equal(typeof guardOnly["tool.execute.before"], "function")
+  assert.equal(guardOnly.event, undefined, "telemetry was not requested")
+
+  const none = await harness(dir, { only: [] })
+  assert.equal(Object.keys(none).length, 1, "only the config hook should remain")
+  rmSync(dir, { recursive: true, force: true })
+})
+
+test("a broken profile cannot stop opencode from starting", async () => {
+  const dir = workspace()
+  const hooks = await harness(dir)
+  // A config naming a profile that does not exist must not throw.
+  const config = { harness: { profile: "no-such-profile" } }
+  await hooks.config(config)
+  rmSync(dir, { recursive: true, force: true })
+})
+
+test("the plugin finds its profile even though the config hook cannot", async () => {
+  // OpenCode's Config schema sets additionalProperties: false, so a custom
+  // `harness` key written into opencode.jsonc is stripped from the object the
+  // config hook receives. This test pins the workaround: the id is read back
+  // from the config file on disk.
+  const dir = workspace()
+  const hooks = await harness(dir)
+  const config = { model: "opencode/space-bunny-free" }
+  assert.equal(config.harness, undefined, "the hook really does lose the key")
+
+  await hooks.config(config)
+
+  // It resolved a profile anyway, which is only possible via the file, and it
+  // recorded it for the prune hook.
+  assert.equal(readFileSync(join(dir, ".space", "active"), "utf8").trim(), "space-bunny-free")
+  assert.equal(config.agent.plan.variant, "max")
+  rmSync(dir, { recursive: true, force: true })
+})
+
+test("an explicit profile option overrides every other source", async () => {
+  const dir = workspace()
+  const hooks = await harness(dir, { profile: "deepseek-v4-flash-free" })
+  const config = { harness: { profile: "space-bunny-free" } }
+  await hooks.config(config)
+  assert.equal(readFileSync(join(dir, ".space", "active"), "utf8").trim(), "deepseek-v4-flash-free")
+  rmSync(dir, { recursive: true, force: true })
+})
+
+function readLines(file) {
+  return readFileSync(file, "utf8").trim().split("\n")
+}

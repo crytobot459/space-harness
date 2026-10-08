@@ -295,3 +295,39 @@ export function retentionFor(id) {
   const table = loadRetention()
   return table[id] ?? table[id.includes("/") ? id : `opencode/${id}`]
 }
+
+/** Where opencode keeps its config, honouring the same env var it does. */
+export function configFilePath() {
+  const dir =
+    process.env.OPENCODE_CONFIG_DIR ??
+    join(process.env.HOME ?? "", ".config", "opencode")
+  return join(dir, "opencode.jsonc")
+}
+
+/**
+ * Read the active profile id from the config file on disk.
+ *
+ * This exists because the `config` hook cannot be the source. OpenCode's
+ * Config schema sets `additionalProperties: false`, so a custom `harness` key
+ * written into the file is stripped from the object handed to the hook. The
+ * file survives; the in-memory config does not. Verified against the 1.18.35
+ * schema.
+ *
+ * @returns {string | null}
+ */
+export function profileIdFromConfig() {
+  const fromEnv = process.env.OPENCODE_HARNESS_PROFILE
+  if (fromEnv) return fromEnv.trim() || null
+
+  const file = configFilePath()
+  if (!existsSync(file)) return null
+  try {
+    const text = readFileSync(file, "utf8")
+    const json = text.slice(text.indexOf("{"))
+    const parsed = JSON.parse(json)
+    const id = parsed?.harness?.profile
+    return typeof id === "string" && id ? id : null
+  } catch {
+    return null
+  }
+}
