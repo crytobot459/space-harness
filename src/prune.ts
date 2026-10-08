@@ -21,11 +21,30 @@ import { loadProfile, pruneThreshold, ROOT } from "./profile.js"
 import { readFileSync, existsSync } from "node:fs"
 import { join } from "node:path"
 
-/** Which profile is active. Set by oc-harness use, read from the config. */
-function activeProfileId(): string | null {
-  const f = join(ROOT, "profiles", ".active")
-  if (!existsSync(f)) return null
-  return readFileSync(f, "utf8").trim() || null
+/**
+ * Which profile is active. In order: an explicit environment variable, the
+ * marker the plugin writes into the project, then a marker inside the package.
+ * Returns null when nothing is set, and pruning then stays off rather than
+ * guessing at thresholds.
+ */
+function activeProfileId(worktree: string): string | null {
+  const candidates = [
+    process.env.OPENCODE_HARNESS_PROFILE,
+    join(worktree, ".space", "active"),
+    join(ROOT, "profiles", ".active"),
+  ]
+  for (const f of candidates) {
+    if (!f) continue
+    try {
+      if (existsSync(f)) {
+        const v = readFileSync(f, "utf8").trim()
+        if (v) return v
+      }
+    } catch {
+      // Try the next location.
+    }
+  }
+  return null
 }
 
 interface StubStats {
@@ -71,7 +90,7 @@ function stub(part: any): string {
 export const PrunePlugin: Plugin = async ({ worktree, $ }) => {
   let profile = null as ReturnType<typeof loadProfile> | null
   try {
-    const id = activeProfileId()
+    const id = activeProfileId(worktree)
     if (id) profile = loadProfile(id)
   } catch {
     profile = null

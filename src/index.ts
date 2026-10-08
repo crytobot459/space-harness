@@ -7,6 +7,8 @@
 // Nothing here names a model. Which model is in use, what effort each role
 // gets, and how much context to reserve all come from a profile.
 
+import { mkdirSync, writeFileSync } from "node:fs"
+import { join } from "node:path"
 import type { Plugin } from "@opencode-ai/plugin"
 import { GuardPlugin } from "./guard.js"
 import { PrunePlugin } from "./prune.js"
@@ -56,6 +58,11 @@ export const HarnessPlugin: Plugin = async (ctx, options?: HarnessOptions) => {
     if (!id) return
     try {
       applyEffort(config, planEffort(id))
+      // Record it where the prune hook can find it, so pruning picks up this
+      // profile's thresholds without needing access to the resolved config.
+      const dir = join(ctx.worktree, ".space")
+      mkdirSync(dir, { recursive: true })
+      writeFileSync(join(dir, "active"), `${id}\n`)
     } catch {
       // Never block startup on a bad profile.
     }
