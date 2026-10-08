@@ -11,7 +11,7 @@
 // The point of the kit: switching models is a data edit, not a code change.
 // Everything model-specific lives in profiles/<id>.json.
 
-import { readFileSync, writeFileSync, existsSync, mkdirSync, rmSync, symlinkSync } from "node:fs"
+import { readFileSync, writeFileSync, existsSync, mkdirSync, rmSync, symlinkSync, readdirSync } from "node:fs"
 import { homedir } from "node:os"
 import { dirname, join } from "node:path"
 import { execFileSync } from "node:child_process"
@@ -20,6 +20,7 @@ import {
   loadProfile,
   loadRetention,
   listProfileIds,
+  profileIdFromConfig,
   profilePath,
   pruneThreshold,
   reservedTokens,
@@ -392,6 +393,76 @@ async function cmdDoctor() {
   )
 }
 
+/**
+ * Report agents in a project that the kit's effort tiering does not cover.
+ *
+ * Tiering only reaches agents named in a profile. A project agent declared in
+ * .opencode/agents/ with no model of its own inherits the global model and runs
+ * at the global effort, which is usually the most expensive tier. That is
+ * exactly the waste this kit exists to remove, and it is invisible otherwise.
+ */
+function cmdAgents() {
+  const dirs = [join(process.cwd(), ".opencode", "agents"), join(process.cwd(), ".opencode", "agent")]
+  const files = dirs.flatMap((d) =>
+    existsSync(d) ? readdirSync(d).filter((f) => f.endsWith(".md")).map((f) => join(d, f)) : [],
+  )
+
+  let current = loadProfile("space-bunny-free")
+  let active = profileIdFromConfig()
+  if (active) {
+    try {
+      current = loadProfile(active)
+    } catch {
+      // Fall back to the default profile for the comparison.
+    }
+  }
+
+  const config = existsSync(CONFIG_FILE) ? stripComments(readFileSync(CONFIG_FILE, "utf8")) : {}
+  const configured = config.model ?? "(none)"
+
+  console.log(`\n${bold("agents")}  ${stamp(`tiering against ${current.id}`)}\n`)
+  if (!files.length) {
+    console.log(`  ${stamp("no project agents found in .opencode/agents")}\n`)
+    return
+  }
+
+  let untiered = 0
+  let stale = 0
+  for (const file of files) {
+    const text = readFileSync(file, "utf8")
+    const name = file.split("/").pop().replace(/\.md$/, "")
+    const front = text.includes("---") ? text.split("---")[1] ?? "" : ""
+    const hasModel = /^\s*model:/m.test(front)
+    const hasVariant = /^\s*variant:/m.test(front)
+
+    const notes = []
+    if (!hasModel) notes.push("no model of its own, inherits the global one")
+    if (!hasVariant && hasModel) notes.push("no variant, runs at the model default")
+
+    // A prompt that names a model which is no longer configured is the
+    // documentation rot that space-finish warns about.
+    const named = text.match(/\b((?:space[- ]?bunny|muse[- ]?spark|gpt-5[\w.-]*|claude-[\w.-]+)[\w. -]*)/i)
+    if (named && !configured.includes(named[1].split(" ")[0].toLowerCase())) {
+      notes.push(`prompt names "${named[1].trim()}" which is not the configured model`)
+    }
+
+    if (!notes.length) {
+      console.log(`  ${green("✓")} ${name.padEnd(14)} ${stamp("tiered")}`)
+      continue
+    }
+    untiered += !hasVariant || !hasModel ? 1 : 0
+    stale += notes.some((nn) => nn.startsWith("prompt names")) ? 1 : 0
+    console.log(`  ${yellow("!")} ${name.padEnd(14)} ${yellow("not tiered")}`)
+    for (const nn of notes) console.log(`      ${nn}`)
+  }
+
+  console.log(
+    `\n  ${untiered ? yellow(`${untiered} agent(s) run at the global effort`) : green("all project agents tiered")}` +
+      `${stale ? `, ${stale} with a stale model name` : ""}`,
+  )
+  console.log(`  ${stamp("add `model:` and `variant:` to the agent frontmatter, or map them in the profile")}\n`)
+}
+
 function fail(msg) {
   console.error(`\n  ${red("error")} ${msg}\n`)
   process.exit(1)
@@ -414,6 +485,9 @@ try {
     case "link":
       cmdLink()
       break
+    case "agents":
+      cmdAgents()
+      break
     case "doctor":
       await cmdDoctor()
       break
@@ -430,6 +504,7 @@ try {
     show <id> print the resolved effort plan and derived numbers
     refresh <id>  update capability fields from models.dev
     link          symlink the built plugin into ~/.config/opencode/plugins
+    agents        report project agents the effort tiering does not reach
     doctor    re-check profiles against models.dev
     baseline  measure the current opencode install
 
