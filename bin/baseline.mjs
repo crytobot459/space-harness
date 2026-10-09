@@ -97,14 +97,24 @@ const DURATION =
   "(json_extract(data,'$.time.completed') - json_extract(data,'$.time.created')) / 1000.0"
 const MODEL_ID = "json_extract(data,'$.providerID') || '/' || json_extract(data,'$.modelID')"
 const VARIANT = "coalesce(json_extract(data,'$.variant'),'(default)')"
+// Median via row_number. SQLite's `/` on integers truncates, so `total/2`
+// picks rank floor(n/2): undershooting for odd n (n=5 gave rank 2 instead of
+// 3) and returning the lower middle rank instead of the average for even n.
+// The (total+1)/2 rank is the true median for odd n; even n averages ranks
+// n/2 and n/2+1.
 const medianLatency = query(
-  `select model, variant, printf('%.1f', ms) as median_ms from (
-     select model, variant, ms, row_number() over (partition by model, variant order by ms) as rn,
-            count(*) over (partition by model, variant) as total
-     from (select ${MODEL_ID} as model, ${VARIANT} as variant, ${DURATION} as ms
-           from message
-           where ${ASSISTANT} and ${DURATION} is not null and ${DURATION} > 0)
-   ) where rn = cast(max(cast(total / 2 as integer), 1) as integer)`,
+  `select model, variant, printf('%.1f', avg(ms)) as median_ms from (
+     select model, variant, ms, rn, total from (
+       select model, variant, ms,
+              row_number() over (partition by model, variant order by ms) as rn,
+              count(*) over (partition by model, variant) as total
+       from (select ${MODEL_ID} as model, ${VARIANT} as variant, ${DURATION} as ms
+             from message
+             where ${ASSISTANT} and ${DURATION} is not null and ${DURATION} > 0)
+     )
+   ) where rn = cast((total + 1) / 2 as integer)
+       or (total % 2 = 0 and rn = cast((total + 2) / 2 as integer))
+   group by model, variant`,
 )
 
 // Share of stored message bytes by part type - the reason context bloats.
