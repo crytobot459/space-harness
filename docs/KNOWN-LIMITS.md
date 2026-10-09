@@ -134,6 +134,14 @@ truncation directory, so re-reading is possible. But "re-run the command to see
 it again" is more expensive than "scroll up". The stub is one line precisely so
 an agent can decide whether it is worth it, and the stub says so.
 
+A `savedBytes` of 0 in `prune.jsonl` is not a second, redundant pass. It means
+`bytesAfter` did not come out below `bytesBefore` for that turn, which happens
+when a stub is no shorter than the output it replaced (the stub's own label
+costs more than a short body), or when a `reasoning` part was under the 200
+byte floor and so was not shortened at all. These lines are still logged
+because a part was stubbed, which is the event worth recording. Savings
+aggregate correctly either way, since each line is measured independently.
+
 `baseline.mjs` measures permission pressure with its own glob approximation of
 OpenCode's matcher, not OpenCode's matcher. It handles the cases that matter
 (bare commands, embedded newlines) but a discrepancy in the last few percent is

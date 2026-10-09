@@ -3,8 +3,8 @@
 // IMPORTANT: opencode treats every exported function in this module as a plugin
 // and calls it with the plugin input. A library re-exported from here is not a
 // plugin, so calling it produces something like "result.model of undefined" at
-// load time. Only plugin functions belong in this file; the library lives in
-// src/lib.ts and is imported directly by the CLI and the tests.
+// load time. Only plugin functions belong in this file; consumers import the
+// library modules (profile, config, rules) directly, per the package exports map.
 //
 // Each concern lives in its own module so a project can install only the ones
 // it wants. Nothing here names a model: which model is in use, what effort each

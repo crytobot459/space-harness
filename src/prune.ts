@@ -207,8 +207,6 @@ export const PrunePlugin: Plugin = async ({ worktree, $ }) => {
 
         if (stats.stubbed > 0) {
           const saved = Math.max(0, stats.bytesBefore - stats.bytesAfter)
-          void $
-          void worktree
           await logPrune(profile.id, {
             ...stats,
             saved,
@@ -228,7 +226,13 @@ export const PrunePlugin: Plugin = async ({ worktree, $ }) => {
   }
 }
 
-async function logPrune(profileId: string, stats: StubStats & { saved: number; threshold: number }) {
+async function logPrune(
+  profileId: string,
+  stats: StubStats & {
+    saved: number
+    threshold: number
+  },
+) {
   const dir = join(process.cwd(), ".space")
   try {
     const { mkdir, appendFile } = await import("node:fs/promises")

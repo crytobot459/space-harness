@@ -113,6 +113,7 @@ async function measurePruning() {
 
   const toolParts = messages.flatMap((m) => m.parts).filter((p) => p.type === "tool")
   const pruned = toolParts.filter((p) => p.state?.metadata?.pruned).length
+  const assistantTurns = messages.filter((m) => m.info.role === "assistant").length
   const usersIntact = messages
     .filter((m) => m.info.role === "user")
     .every((m) => m.parts[0].text === "continue")
@@ -122,6 +123,7 @@ async function measurePruning() {
     bytesBefore: before,
     bytesAfter: after,
     reductionPct: +(((before - after) / before) * 100).toFixed(1),
+    assistantTurns,
     toolParts: toolParts.length,
     pruned,
     usersIntact,
@@ -238,7 +240,7 @@ const wrap = (text, width) => {
 
 console.log(`\nopencode-harness-kit eval  ${report.generated}\n`)
 
-console.log("CONTEXT PRUNING  (synthetic transcript: 45 assistant turns, 45 tool calls)")
+console.log(`\nCONTEXT PRUNING  (synthetic transcript: ${pruning.assistantTurns} assistant turns, ${pruning.toolParts} tool calls)`)
 console.log(`  ${pad("bytes before")} ${n(pruning.bytesBefore)}`)
 console.log(`  ${pad("bytes after")} ${n(pruning.bytesAfter)}`)
 console.log(`  ${pad("reduction")} ${pruning.reductionPct}%`)
