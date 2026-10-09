@@ -4,9 +4,14 @@ A harness kit for [OpenCode](https://opencode.ai) that is **model-agnostic by
 construction**. Switching models is a data edit, not a code change.
 
 ```bash
-npx oc-harness list
-npx oc-harness use space-bunny-free
+npx oc-harness use space-bunny-free   # compile the profile
+npx oc-harness install                # link the agents, skills and GLOBAL.md
+npx oc-harness verify                 # prove the install is whole
 ```
+
+`use` writes the config. `install` writes everything the config *points at*.
+Skipping it is the failure mode this kit is built to prevent: see
+[Install](#install).
 
 ## The problem it solves
 
@@ -43,7 +48,8 @@ $ oc-harness use deepseek-v4-flash-free --print
 // Derived numbers, do not hand-edit:
 //   compaction.reserved  24,000   (12% of the input cap)
 //   prune threshold      176,000  (input cap minus reserve)
-//   role effort          plan=max  build=high  reviewer=max  scout=low  verify=low
+//   role effort          plan=max  build=high  reviewer=max  locate=low  verify=low
+//   agent steps          build=40  plan=25  reviewer=15  locate=12  verify=20
 ```
 
 Against a 1M-context model, the same source produces `reserved 62,915` and
@@ -100,9 +106,45 @@ on install. It is not hidden, it is labelled.
 oc-harness list       profiles with retention and caveats
 oc-harness use <id>   compile a profile into ~/.config/opencode/opencode.jsonc
 oc-harness show <id>  resolved effort, derived numbers, fallback queue
-oc-harness doctor     re-check every profile against models.dev
+oc-harness install    symlink the plugin, agents, skills and GLOBAL.md
+oc-harness verify     check the install against the profile; non-zero on drift
+oc-harness agents     report agents the effort tiering does not reach
+oc-harness doctor     re-check profiles against models.dev and the live config
 oc-harness baseline   measure the current install
 ```
+
+### `verify` is the command that matters
+
+A generated config is only half an install. The other half is the instruction
+file it names, the agent files it declares, and the plugin that enforces the
+guard — and every one of those can be missing while the config still validates
+and still looks correct.
+
+That is not hypothetical. On a real install of this kit, `opencode.jsonc`
+pointed at a `GLOBAL.md` that did not exist, declared three agents whose markdown
+files had never been copied, and had `build` — the *default* agent — hand-pinned
+to a `may-train` model while every generated field still matched the profile.
+Nothing errored. `opencode agent list` simply did not show those agents.
+
+So `verify` exits non-zero when the config has drifted from its profile, when an
+instruction path does not resolve, when a tiered role has no agent file, when an
+agent names a model that is not active, or when a stripped schema key is present:
+
+```
+$ oc-harness verify
+
+verify  profile space-bunny-free -> ~/.config/opencode/opencode.jsonc
+
+  ✓ config matches profile space-bunny-free
+  ✓ instruction ~/.config/opencode/GLOBAL.md resolves
+  ✓ plugin linked
+
+  install is consistent with the profile
+```
+
+`doctor` now reports the same config drift alongside its models.dev check, because
+"the profile is fine" and "the installed config matches the profile" are
+different questions and only one of them was being asked.
 
 `doctor` exists because free models get withdrawn within days. It diffs each
 profile against live metadata and reports drift:
@@ -123,18 +165,41 @@ From one real install:
 
 ```
 CONTEXT PER REQUEST
-  p50   99,648    p90  246,536    p99  482,779    max  547,986
-  fresh input p50  534
+  p50   100,942   p90  256,940    p99  481,687    max  547,986
+  fresh input p50  528
 STORED MESSAGE BYTES
-  tool        114.78 MB   77.9%
-  reasoning    22.94 MB   15.6%
-  text          3.04 MB    2.1%
+  tool        116.58 MB   77.9%
+  reasoning    23.10 MB   15.4%
+  text          3.12 MB    2.1%
+READ PRESSURE
+  read calls                 2,966
+  grep/glob/list               249
+  reads per search            11.9
+  reads over 8 KB             415
+  cut by the 200-line cap     441
+  re-reads with an offset     423
+PERMISSION PRESSURE
+  prompt with kit allowlist  1,002 (18.5%)
 compaction events  0  (never fired)
 ```
 
-Tool output was 78% of stored context and the session re-read ~99k tokens per
-request to add ~534 new ones. That measurement is why pruning here is
-deterministic, and why `tool_output` stays tight instead of being raised.
+Four numbers in that report changed how this kit is configured, and two of them
+reversed an earlier decision:
+
+**Tool output is 78% of stored context**, and sessions re-read ~101k tokens per
+request to add ~528 new ones. That is why pruning here is deterministic and
+unconditional.
+
+**Read pressure is 11.9 whole-file reads per search.** Every production harness
+in the study in `docs/KNOWN-LIMITS.md` searches before reading; this one mostly
+did not. That is a prompt problem, not a config problem, and the fix is a rule
+in `GLOBAL.md` and in the agent files rather than a number.
+
+**Truncation and re-read are the same number.** 441 reads were cut by the
+200-line cap and 423 were re-read with an `offset`. Truncation was not saving
+context, it was buying extra round trips at ~17s median apiece — which is why
+`tool_output` now sits at OpenCode's own 2000 / 51200 default. Only 14 of 2,966
+reads exceed 51,200 bytes, so that ceiling is not what limits context.
 
 Your numbers stay on your machine; only the script is in the repo.
 
@@ -157,14 +222,22 @@ stale reasoning is worse than none.
 
 ## Install
 
+Two commands, in this order:
+
 ```bash
-npx oc-harness use space-bunny-free
+npx oc-harness use space-bunny-free   # writes opencode.jsonc
+npx oc-harness install                # writes everything that file points at
 ```
 
-Then add the plugin to `~/.config/opencode/opencode.json`:
+`install` symlinks (not copies) the plugin, `agents/`, `skills/` and `GLOBAL.md`
+into `~/.config/opencode/`, so this repo stays the single source of truth and an
+edit here takes effect on the next opencode start.
 
-```json
-{ "plugin": ["opencode-harness-kit"] }
+Then restart opencode. Check it took:
+
+```bash
+opencode debug config | grep -A3 '"agent"'
+opencode agent list | grep -E '^(build|plan|reviewer|locate|verify) '
 ```
 
 `oc-harness use` writes the active profile id into the generated config, and
@@ -175,12 +248,46 @@ picks up the right thresholds. To pin a profile explicitly instead:
 export OPENCODE_HARNESS_PROFILE=space-bunny-free
 ```
 
-To install the agent and skill files as well, copy them into your config
-directory:
+### Permissions: why `edit` is `allow`
 
-```bash
-cp -r agents skills GLOBAL.md ~/.config/opencode/
+The generated config sets `permission.edit: "allow"`, which looks like it
+contradicts the read-only roles. It does not, and the reason is an ordering rule
+worth knowing before you edit these by hand.
+
+OpenCode appends the **global** permission rule *after* the agent's own, and
+**the last matching rule wins**. So a global `edit: "ask"` silently overrides
+every agent's `edit: "deny"` — and the read-only roles can edit files after a
+prompt. `allow` is the permissive *implicit default* and emits no rule at all,
+which leaves each agent's `deny` deciding. Verified with `opencode agent list`:
+
 ```
+build      edit -> allow
+plan       edit -> deny
+locate     edit -> deny
+reviewer   edit -> deny
+verify     edit -> deny
+```
+
+Writes outside the project still ask, via `external_directory`.
+
+## Roles
+
+| role | mode | job | effort |
+|---|---|---|---|
+| `build` | primary | writes and verifies code | middle |
+| `plan` | primary | turns a request into an executable plan | highest |
+| `reviewer` | subagent | two passes, never edits | highest |
+| `locate` | subagent | finds code, reports `file:line`, never designs | lowest |
+| `verify` | subagent | runs checks, never fixes them | lowest |
+
+`locate` is deliberately *not* called `scout`: OpenCode ships a built-in `scout`
+subagent for dependency and external-docs research, and shipping our own file
+under that name shadowed it with `bash: deny` so it could not do the one thing
+the built-in exists for.
+
+Each role carries a `steps` cap. It is a loop breaker, not a quality knob: on
+exhaustion OpenCode forces a text-only response, so an agent that has stopped
+making progress reports rather than looping until the context is gone.
 
 ## Known limits
 
@@ -192,8 +299,9 @@ so switching happens at the next session, not mid-flight.
 
 ```bash
 npm install
-npm test          # 16 tests, including the model-agnostic assertions
+npm test          # 53 tests, including the model-agnostic assertions
 npm run typecheck
+npm run eval      # synthetic: pruning, prompt pressure, effort projection
 npm run baseline  # your own install
 ```
 

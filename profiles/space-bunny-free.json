@@ -29,7 +29,7 @@
     "plan": "max",
     "build": "high",
     "reviewer": "max",
-    "scout": "low",
+    "locate": "low",
     "verify": "low"
   },
   "prune": {

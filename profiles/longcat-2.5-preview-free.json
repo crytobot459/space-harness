@@ -28,7 +28,7 @@
     "plan": null,
     "build": null,
     "reviewer": null,
-    "scout": null,
+    "locate": null,
     "verify": null
   },
   "prune": {

@@ -11,9 +11,9 @@
 // The point of the kit: switching models is a data edit, not a code change.
 // Everything model-specific lives in profiles/<id>.json.
 
-import { readFileSync, writeFileSync, existsSync, mkdirSync, rmSync, symlinkSync, readdirSync } from "node:fs"
+import { readFileSync, writeFileSync, existsSync, mkdirSync, rmSync, symlinkSync, readdirSync, readlinkSync, realpathSync } from "node:fs"
 import { homedir } from "node:os"
-import { dirname, join } from "node:path"
+import { dirname, join, relative } from "node:path"
 import { execFileSync } from "node:child_process"
 
 import {
@@ -28,7 +28,7 @@ import {
   resolveRoles,
   ProfileError,
 } from "../src/profile.js"
-import { generateConfig } from "../src/config.js"
+import { generateConfig, globalInstructionsPath } from "../src/config.js"
 import { planEffort } from "../src/effort.js"
 
 const CONFIG_DIR =
@@ -169,18 +169,286 @@ function cmdLink() {
   const dir = join(CONFIG_DIR, "plugins")
   mkdirSync(dir, { recursive: true })
   const target = join(dir, "opencode-harness-kit.js")
-  try {
-    rmSync(target, { force: true })
-  } catch {
-    // Fresh symlink.
-  }
-  // A relative link survives the package moving or being reinstalled.
-  symlinkSync(join("..", "..", "..", "harness", "space-harness", "dist", "index.js"), target)
+  // Relative to wherever this package actually is. The previous version wrote a
+  // literal `../../../harness/space-harness/...`, which was right on one machine
+  // and broken everywhere else, CI included.
+  linkOne(dist, target)
   console.log(`\n  ${green("✓")} linked ${target}`)
   console.log(
     `  ${stamp("opencode loads ~/.config/opencode/plugins automatically")}\n` +
       `  ${stamp("restart opencode, then: opencode debug config")}\n`,
   )
+}
+
+/** Where the behavioural layer has to land for the config to mean anything. */
+function installTargets() {
+  return [
+    { src: join(ROOT, "agents"), dest: join(CONFIG_DIR, "agents"), kind: "dir" },
+    { src: join(ROOT, "skills"), dest: join(CONFIG_DIR, "skills"), kind: "dir" },
+    { src: join(ROOT, "GLOBAL.md"), dest: join(CONFIG_DIR, "GLOBAL.md"), kind: "file" },
+  ]
+}
+
+/**
+ * Replace `link` with `link` plus the agents, skills and GLOBAL.md.
+ *
+ * `use` only ever wrote opencode.jsonc, so the rest of the kit - the five role
+ * prompts, the four skills, the global rules - was a `cp` line in the README
+ * that nobody ran. Nothing checked it afterwards, which is how a config ended
+ * up pointing at an instruction file that did not exist while still looking
+ * correct. Symlinks rather than copies, so the repo stays the source of truth.
+ */
+function cmdInstall() {
+  const dist = join(ROOT, "dist", "index.js")
+  if (!existsSync(dist)) fail("dist/index.js missing. Run: npm run build")
+
+  // The plugin link first: without it the guard is not enforcing anything.
+  cmdLink()
+
+  for (const { src, dest, kind } of installTargets()) {
+    if (!existsSync(src)) {
+      console.log(`  ${yellow("!")} ${stamp(`${kind} missing in repo: ${src}`)}`)
+      continue
+    }
+    const parent = dirname(dest)
+    mkdirSync(parent, { recursive: true })
+
+    if (kind === "dir") {
+      // Merge rather than replace: the user may keep their own skills beside
+      // the kit's, and clobbering a directory that holds unrelated content is
+      // not something an installer should do silently.
+      mkdirSync(dest, { recursive: true })
+      for (const entry of readdirSync(src, { withFileTypes: true })) {
+        if (!entry.isDirectory() && !entry.name.endsWith(".md") && !entry.name.endsWith(".json")) {
+          continue
+        }
+        linkOne(join(src, entry.name), join(dest, entry.name))
+      }
+      continue
+    }
+    linkOne(src, dest)
+  }
+
+  console.log(`\n  ${green("✓")} installed into ${CONFIG_DIR}`)
+  for (const { dest } of installTargets()) {
+    console.log(`  ${stamp(`  ${dest.replace(`${homedir()}/`, "~/")}`)}`)
+  }
+  console.log(
+    `\n  ${stamp('then: oc-harness use <profile> && oc-harness verify')}\n` +
+      `${stamp("restart opencode for the agents to be picked up")}\n`,
+  )
+}
+
+/**
+ * Symlink one path, replacing whatever is there, without following symlinks.
+ *
+ * The link is relative so the config directory survives the package moving. The
+ * path it is computed from is realpath'd first: on macOS /var is a symlink to
+ * /private/var, so a relative path computed from /var/... resolves against
+ * /private/var/... and a link built that way ends up one level short of its
+ * target - a broken symlink that only appears outside the home directory.
+ */
+function linkOne(src, dest) {
+  const parent = realpathSync(dirname(dest))
+  const target = relative(parent, realpathSync(src))
+  let stale = false
+  try {
+    stale = readlinkSync(dest) !== target
+  } catch {
+    stale = true
+  }
+  if (stale) {
+    try {
+      rmSync(dest, { force: true, recursive: false })
+    } catch {
+      // Nothing to remove, or it is a real directory we must not delete.
+    }
+  }
+  if (!existsSync(dest)) {
+    try {
+      symlinkSync(target, dest)
+    } catch (err) {
+      console.log(`  ${yellow("!")} ${stamp(`could not link ${dest}: ${err.message}`)}`)
+    }
+  }
+}
+
+/**
+ * The anti-rot check. Everything here corresponds to a silent failure that has
+ * already happened on a real install: a config whose model was hand-edited off
+ * the profile, an instruction path that resolves to nothing, and a set of role
+ * agents that were never installed while the config still declared them.
+ *
+ * Exits non-zero when anything fails, so it can gate a commit or a CI job.
+ */
+function cmdVerify() {
+  const problems = []
+  const notes = []
+  const ok = []
+
+  const activeId = profileIdFromConfig() ?? index().default
+  let p = null
+  try {
+    p = loadProfile(activeId)
+  } catch (err) {
+    fail(`active profile "${activeId}" cannot be loaded: ${err.message}`)
+  }
+
+  // 1. The generated config must still be what the profile compiles to. A
+  //    hand-edit anywhere in the model/variant/permission surface shows up
+  //    here, which is the check that would have caught `build` being moved onto
+  //    a may-train model.
+  const actual = existsSync(CONFIG_FILE)
+    ? stripComments(readFileSync(CONFIG_FILE, "utf8"))
+    : null
+  if (!actual) {
+    problems.push(`${CONFIG_FILE} does not exist. Run: oc-harness use ${p.id}`)
+  } else {
+    const drift = configDrift(p, actual)
+    if (!drift.length) {
+      ok.push(`config matches profile ${p.id}`)
+    } else {
+      for (const d of drift) problems.push(`config drift: ${d}`)
+    }
+  }
+
+  // 2. Instruction paths must resolve. An unresolved path is a no-op, not an
+  //    error, which is why it can sit there for weeks unnoticed.
+  const instructions = (actual?.instructions ?? [globalInstructionsPath()])
+  for (const raw of instructions) {
+    const target = raw.startsWith("~")
+      ? join(homedir(), raw.slice(1))
+      : raw.startsWith("/")
+        ? raw
+        : join(process.cwd(), raw)
+    if (existsSync(target)) {
+      ok.push(`instruction ${raw} resolves`)
+    } else {
+      problems.push(
+        `instruction "${raw}" does not exist - the rules in it are not being loaded. Run: oc-harness install`,
+      )
+    }
+  }
+
+  // 3. Every role the profile tiers must have an installed agent file, or the
+  //    config entry configures a model and a permission but no behaviour.
+  const agentsDir = join(CONFIG_DIR, "agents")
+  const roles = resolveRoles(p)
+  for (const [role, level] of Object.entries(roles)) {
+    if (level === undefined) continue
+    const file = join(agentsDir, `${role}.md`)
+    if (!existsSync(file)) {
+      // build and plan are built-in agents: opencode reads their config entry
+      // even with no markdown file, but they then carry no custom prompt.
+      const builtin = role === "build" || role === "plan"
+      const msg = builtin
+        ? `no agents/${role}.md - ${role} is a built-in agent, so it runs with opencode's default prompt, not this kit's`
+        : `no agents/${role}.md - ${role} is declared in the config but does not exist as an agent. Run: oc-harness install`
+      problems.push(msg)
+      continue
+    }
+    const front = stripFrontmatter(readFileSync(file, "utf8"))
+    const wantModel = `${p.provider}/${p.model}`
+    const gotModel = front.model
+    if (gotModel && gotModel !== wantModel) {
+      problems.push(`agents/${role}.md names model ${gotModel}, profile says ${wantModel}`)
+    } else if (!gotModel) {
+      notes.push(`agents/${role}.md has no model: inherits the session model, so effort tiering may not apply`)
+    }
+    if (!gotModel && front.variant) {
+      problems.push(`agents/${role}.md sets variant "${front.variant}" without a model; variant only applies to the agent's own model`)
+    }
+  }
+
+  // 4. No installed agent may name a model that is not the active one. A
+  //    stale name in a prompt is the documentation rot `space-finish` warns
+  //    about, and it also means the agent silently runs on another model.
+  if (existsSync(agentsDir)) {
+    for (const name of readdirSync(agentsDir).filter((f) => f.endsWith(".md"))) {
+      const text = readFileSync(join(agentsDir, name), "utf8")
+      const named = text.match(/opencode\/([a-z0-9.\-]+)/i)
+      if (named && named[1] !== p.model) {
+        problems.push(`agents/${name} mentions opencode/${named[1]}, active profile is ${p.model}`)
+      }
+    }
+  }
+
+  // 5. The plugin link has to exist or none of the guard is running.
+  const pluginLink = join(CONFIG_DIR, "plugins", "opencode-harness-kit.js")
+  if (existsSync(pluginLink)) ok.push("plugin linked")
+  else notes.push("no plugin link: the guard is not enforcing anything. Run: oc-harness link")
+
+  // 6. Schema check. `variant` at the top level is silently stripped by
+  //    OpenCode, so emitting it looks like tiering and does nothing.
+  if (actual && "variant" in actual) {
+    problems.push(
+      "top-level `variant` is rejected by the 1.18.35 Config schema and stripped at load; tiering comes from agent.*.variant",
+    )
+  }
+
+  console.log(`\n${bold("verify")}  ${stamp(`profile ${p.id} -> ${CONFIG_FILE}`)}\n`)
+  for (const o of ok) console.log(`  ${green("✓")} ${o}`)
+  for (const nt of notes) console.log(`  ${yellow("!")} ${nt}`)
+  for (const pr of problems) console.log(`  ${red("✗")} ${pr}`)
+
+  if (problems.length) {
+    console.log(`\n  ${red(`${problems.length} problem(s)`)}\n`)
+    process.exit(1)
+  }
+  console.log(`\n  ${green("install is consistent with the profile")}\n`)
+}
+
+/** Minimal `key: value` reader for agent frontmatter. */
+function stripFrontmatter(text) {
+  const block = /^---\n([\s\S]*?)\n---/.exec(text)
+  if (!block) return {}
+  const out = {}
+  for (const line of block[1].split("\n")) {
+    const m = /^([A-Za-z_][\w]*):\s*(.+?)\s*$/.exec(line)
+    if (m) out[m[1]] = m[2].replace(/^["']|["']$/g, "")
+  }
+  return out
+}
+
+/**
+ * Fields of the installed config that must agree with the profile. Model and
+ * variant first because those are the ones with consequences that are invisible
+ * from inside a session.
+ */
+function configDrift(p, actual) {
+  const out = []
+  const want = `${p.provider}/${p.model}`
+  const roles = resolveRoles(p)
+
+  if (actual.model !== want) out.push(`model ${actual.model} -> ${want}`)
+
+  for (const [role, level] of Object.entries(roles)) {
+    if (level === undefined) continue
+    const agent = actual.agent?.[role]
+    if (!agent) {
+      out.push(`agent.${role} missing`)
+      continue
+    }
+    if (agent.model !== want) out.push(`agent.${role}.model ${agent.model} -> ${want}`)
+    if (agent.variant !== (level ?? undefined)) {
+      out.push(`agent.${role}.variant ${agent.variant ?? "(none)"} -> ${level ?? "(none)"}`)
+    }
+  }
+
+  const wantReserved = reservedTokens(p)
+  if (actual.compaction?.reserved !== wantReserved) {
+    out.push(`compaction.reserved ${actual.compaction?.reserved} -> ${wantReserved}`)
+  }
+  const wantThreshold = pruneThreshold(p)
+  if (actual.harness?.threshold !== wantThreshold) {
+    out.push(`harness.threshold ${actual.harness?.threshold} -> ${wantThreshold}`)
+  }
+  if (actual.permission?.edit !== "allow") {
+    out.push(
+      `permission.edit ${actual.permission?.edit ?? "(unset)"} -> allow. While it is ask, opencode appends the global rule after each agent's and last-match-wins overrides every read-only role's edit deny.`,
+    )
+  }
+  return out
 }
 
 function cmdUse(id) {
@@ -391,6 +659,32 @@ async function cmdDoctor() {
       ? `\n  ${yellow(`${problems} profile(s) drifted`)}\n`
       : `\n  ${green("all profiles match live metadata")}\n`,
   )
+
+  // Second half: is the *installed* config still what the active profile
+  // compiles to? `doctor` used to only compare profiles against models.dev,
+  // which is the right check for perishable metadata and the wrong check for a
+  // config that was hand-edited after generation. The install that prompted
+  // this had `build` - the default agent - moved onto a may-train model while
+  // every other field still matched, and doctor reported everything green.
+  const activeId = profileIdFromConfig()
+  if (!activeId) {
+    console.log(`  ${yellow("!")} ${stamp("no profile recorded in the config. Run: oc-harness use <profile>")}\n`)
+    return
+  }
+  const installed = existsSync(CONFIG_FILE) ? stripComments(readFileSync(CONFIG_FILE, "utf8")) : null
+  if (!installed) {
+    console.log(`  ${yellow("!")} ${stamp(`${CONFIG_FILE} missing. Run: oc-harness use ${activeId}`)}\n`)
+    return
+  }
+  const drift = configDrift(loadProfile(activeId), installed)
+  console.log(`${bold("installed config")}  ${stamp(activeId)}\n`)
+  if (drift.length === 0) {
+    console.log(`  ${green("✓")} ${stamp("opencode.jsonc matches the profile")}`)
+  } else {
+    for (const d of drift) console.log(`  ${yellow("!")} ${d}`)
+    console.log(`\n  ${yellow(`${drift.length} field(s) drifted from the profile`)}`)
+    console.log(`  ${stamp(`fix: oc-harness use ${activeId}`)}\n`)
+  }
 }
 
 /**
@@ -402,63 +696,74 @@ async function cmdDoctor() {
  * exactly the waste this kit exists to remove, and it is invisible otherwise.
  */
 function cmdAgents() {
-  const dirs = [join(process.cwd(), ".opencode", "agents"), join(process.cwd(), ".opencode", "agent")]
+  // The global dir is where `oc-harness install` puts the kit's own agents, so
+  // scanning only the project reported "no project agents found" forever and hid
+  // the fact that none of them were installed at all.
+  const dirs = [
+    join(CONFIG_DIR, "agents"),
+    join(process.cwd(), ".opencode", "agents"),
+    join(process.cwd(), ".opencode", "agent"),
+  ]
   const files = dirs.flatMap((d) =>
     existsSync(d) ? readdirSync(d).filter((f) => f.endsWith(".md")).map((f) => join(d, f)) : [],
   )
 
-  let current = loadProfile("space-bunny-free")
+  // Never hardcode a profile here: the whole point is to check the one that is
+  // actually active.
   let active = profileIdFromConfig()
-  if (active) {
-    try {
-      current = loadProfile(active)
-    } catch {
-      // Fall back to the default profile for the comparison.
-    }
+  let current = null
+  try {
+    current = loadProfile(active ?? index().default)
+  } catch {
+    current = null
+  }
+  if (!current) {
+    fail("no profile is installed. Run: oc-harness use <profile>")
   }
 
   const config = existsSync(CONFIG_FILE) ? stripComments(readFileSync(CONFIG_FILE, "utf8")) : {}
   const configured = config.model ?? "(none)"
+  const wantModel = `${current.provider}/${current.model}`
 
   console.log(`\n${bold("agents")}  ${stamp(`tiering against ${current.id}`)}\n`)
   if (!files.length) {
-    console.log(`  ${stamp("no project agents found in .opencode/agents")}\n`)
+    console.log(`  ${red("✗")} ${yellow("no agent markdown found")}`)
+    console.log(`      ${stamp(`looked in ${dirs.join("\n      ")}`)}`)
+    console.log(`      ${stamp("run: oc-harness install")}\n`)
     return
   }
 
+  const roles = resolveRoles(current)
   let untiered = 0
   let stale = 0
   for (const file of files) {
     const text = readFileSync(file, "utf8")
     const name = file.split("/").pop().replace(/\.md$/, "")
-    const front = text.includes("---") ? text.split("---")[1] ?? "" : ""
-    const hasModel = /^\s*model:/m.test(front)
-    const hasVariant = /^\s*variant:/m.test(front)
+    const front = stripFrontmatter(text)
+    const hasModel = Boolean(front.model)
+    const hasVariant = Boolean(front.variant)
+    const isKitRole = name in roles
 
     const notes = []
-    if (!hasModel) notes.push("no model of its own, inherits the global one")
-    if (!hasVariant && hasModel) notes.push("no variant, runs at the model default")
-
-    // A prompt that names a model which is no longer configured is the
-    // documentation rot that space-finish warns about.
-    const named = text.match(/\b((?:space[- ]?bunny|muse[- ]?spark|gpt-5[\w.-]*|claude-[\w.-]+)[\w. -]*)/i)
-    if (named && !configured.includes(named[1].split(" ")[0].toLowerCase())) {
-      notes.push(`prompt names "${named[1].trim()}" which is not the configured model`)
+    if (!hasModel) notes.push("no model of its own, inherits the session model")
+    if (front.model && front.model !== wantModel) {
+      notes.push(`model ${front.model} is not the active ${wantModel}`)
     }
+    if (hasModel && !hasVariant) notes.push("no variant, runs at the model default")
 
     if (!notes.length) {
-      console.log(`  ${green("✓")} ${name.padEnd(14)} ${stamp("tiered")}`)
+      console.log(`  ${green("✓")} ${name.padEnd(14)} ${stamp(`tiered${isKitRole ? ` ${roles[name]}` : ""}`)}`)
       continue
     }
     untiered += !hasVariant || !hasModel ? 1 : 0
-    stale += notes.some((nn) => nn.startsWith("prompt names")) ? 1 : 0
+    stale += front.model && front.model !== wantModel ? 1 : 0
     console.log(`  ${yellow("!")} ${name.padEnd(14)} ${yellow("not tiered")}`)
     for (const nn of notes) console.log(`      ${nn}`)
   }
 
   console.log(
-    `\n  ${untiered ? yellow(`${untiered} agent(s) run at the global effort`) : green("all project agents tiered")}` +
-      `${stale ? `, ${stale} with a stale model name` : ""}`,
+    `\n  ${untiered ? yellow(`${untiered} agent(s) run at the session effort`) : green("all agents tiered")}` +
+      `${stale ? `, ${stale} pinned to a model that is not active` : ""}`,
   )
   console.log(`  ${stamp("add `model:` and `variant:` to the agent frontmatter, or map them in the profile")}\n`)
 }
@@ -485,6 +790,12 @@ try {
     case "link":
       cmdLink()
       break
+    case "install":
+      cmdInstall()
+      break
+    case "verify":
+      cmdVerify()
+      break
     case "agents":
       cmdAgents()
       break
@@ -503,9 +814,11 @@ try {
     use <id>  compile a profile into ${CONFIG_FILE}
     show <id> print the resolved effort plan and derived numbers
     refresh <id>  update capability fields from models.dev
+    install   symlink the plugin, agents, skills and GLOBAL.md into the config dir
+    verify    check the install still matches the profile and its rules are loaded
     link          symlink the built plugin into ~/.config/opencode/plugins
-    agents        report project agents the effort tiering does not reach
-    doctor    re-check profiles against models.dev
+    agents        report agents the effort tiering does not reach
+    doctor    re-check profiles against models.dev and the installed config
     baseline  measure the current opencode install
 
   options

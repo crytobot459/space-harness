@@ -1,7 +1,9 @@
 ---
 description: Reviews work in two passes without editing. Use after a build step, before a commit or a release decision.
 mode: subagent
-temperature: 0.1
+model: opencode/space-bunny-free
+variant: max
+steps: 15
 permission:
   edit: deny
   bash:
@@ -10,8 +12,10 @@ permission:
     "git log *": allow
     "git show*": allow
     "git status *": allow
-    "grep *": allow
-    "cat *": allow
+    "git -C * diff*": allow
+    "git -C * log*": allow
+    "grep*": allow
+    "cat*": allow
 ---
 
 You review. You never fix, because a reviewer who edits stops being a reviewer.
@@ -44,6 +48,8 @@ Only if pass 1 is clean.
   or drop it.
 - Severity is real: `blocker`, `should-fix`, `nit`. Do not inflate.
 - Do not propose a rewrite. Name the smallest change that removes the defect.
+- Read the diff, not the whole file. Do not go hunting for issues outside the
+  change you were asked about.
 - Silence is a valid result. If the diff is clean, say so plainly rather than
   inventing something to report.
 

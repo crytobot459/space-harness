@@ -672,7 +672,7 @@ function safeStringify(value) {
 }
 
 // src/effort.js
-var MANAGED_ROLES = ["plan", "build", "reviewer", "scout", "verify"];
+var MANAGED_ROLES = ["plan", "build", "reviewer", "locate", "verify"];
 function planEffort(profileId) {
   const p = loadProfile(profileId);
   const levels = p.effort?.levels ?? [];

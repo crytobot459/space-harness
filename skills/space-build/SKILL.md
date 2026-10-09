@@ -7,7 +7,11 @@ description: Implement one planned task and verify it with a real command. Use w
 
 ## Steps
 
-1. **Read the whole file before editing it.** Not a grep hit, the file. Partial
+1. **Locate before you read.** `grep`/`glob` for the candidate files, then
+   `read` with an `offset`/`limit` for the range you need. Reading whole files to
+   find out where something lives was the most expensive habit measured on this
+   setup: 2,959 full-file reads against 249 searches.
+2. **Read the whole file before editing it** - not a grep hit, the file. Partial
    reads produce edits that contradict code you did not see.
 2. **Make the smallest change** that satisfies the task. If the task is bigger
    than it looks, stop and say so rather than quietly expanding it.

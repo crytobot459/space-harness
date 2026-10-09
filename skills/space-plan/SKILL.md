@@ -20,12 +20,15 @@ Skip it for a single obvious edit. Writing a plan for `fix the typo` is waste.
 
 ## Steps
 
-1. **Read first.** Grep the file names that must be involved and read them. A
-   plan built on assumed paths is worse than no plan: it reads as confident and
-   sends the build step to the wrong place.
+1. **Read first, but narrowly.** Grep the file names that must be involved,
+   then read the functions you need with an offset. A plan built on assumed
+   paths is worse than no plan: it reads as confident and sends the build step
+   to the wrong place. Reading whole files to check whether a function exists is
+   not orientation, it is 20x the context.
 2. **State the goal in one sentence, in the caller's words.** If you cannot,
-   you do not understand the request yet. Ask one specific question. Do not ask
-   five.
+   you do not understand the request yet. Ask **one** specific question, and only
+   when a wrong guess would cost money, break the build irreversibly, publish
+   something, or be irreversible. Everything else you decide yourself.
 3. **List the constraints.** What must not change. What is out of scope. What
    already exists that must keep working.
 4. **Break it into tasks that fit in a few minutes each.** For every task:

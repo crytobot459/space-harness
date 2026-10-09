@@ -86,7 +86,7 @@
         "plan": { "$ref": "#/definitions/effortRequest" },
         "build": { "$ref": "#/definitions/effortRequest" },
         "reviewer": { "$ref": "#/definitions/effortRequest" },
-        "scout": { "$ref": "#/definitions/effortRequest" },
+        "locate": { "$ref": "#/definitions/effortRequest" },
         "verify": { "$ref": "#/definitions/effortRequest" }
       }
     },

@@ -15,6 +15,10 @@ description: Close out a task: confirm checks, summarise the change, and hand th
    something that no longer exists? Fix the document, do not note it for later.
 4. **Write the summary** a person needs in order to trust the change without
    reading the whole diff.
+5. **Check the install is still whole.** If this project is driven by a generated
+   config or profile, run its verify command. A hand-edit survives a regeneration
+   silently, and that is how a zero-retention claim ends up running on a
+   may-train model.
 
 ## Summary shape
 

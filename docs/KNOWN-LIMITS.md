@@ -2,6 +2,72 @@
 
 Written down so nobody spends a day rediscovering them.
 
+## A global `permission.edit: "ask"` silently un-locks every read-only agent
+
+Worth knowing before you hand-edit the generated config, because the failure is
+invisible from the config itself.
+
+Two documented OpenCode behaviours combine badly:
+
+1. Permission rules are matched with **the last matching rule winning**.
+2. The **global** rule is appended *after* the agent's own rule.
+
+So an agent configured `edit: "deny"` under a global `permission.edit: "ask"`
+resolves to **ask**, not deny. The read-only roles can edit files, just not
+without a prompt. Confirmed on 1.18.35 with `opencode agent list`, which prints
+each agent's fully resolved rule list — for `plan` it showed `edit * deny`
+followed by `edit * ask`.
+
+The fix is counter-intuitive: set the global to `allow`. `allow` is the
+permissive *implicit default* and emits no rule at all, so each agent's `deny` is
+what decides. Verified after the change:
+
+```
+build      edit -> allow
+plan       edit -> deny
+locate     edit -> deny
+reviewer   edit -> deny
+verify     edit -> deny
+```
+
+Writes outside the project still ask, via `external_directory`.
+
+## Two schema keys this kit used to emit, and what they do instead
+
+The 1.18.35 `Config` schema sets `additionalProperties: false`, so an
+unrecognised top-level key is stripped from the resolved config rather than
+rejected. Two keys were being written that OpenCode throws away:
+
+- **`variant`** is not a top-level config key at all. It only exists on
+  `agent.<name>.variant`. Per-role tiering is delivered by those, and
+  `effort.js` sets the session default in the `config` hook where the runtime
+  still sees it. A test once asserted this key existed, which meant it was
+  asserting that dead config was present.
+- **`harness`** survives in the file but is not visible to the `config` hook, so
+  the plugin reads the profile id from the file on disk instead. That behaviour
+  is correct and `profile.js` documents it; `variant` had no such workaround and
+  was simply doing nothing.
+
+`oc-harness verify` fails on a top-level `variant` specifically, because it looks
+exactly like working tiering in a config you are reading.
+
+## A generated config is only half an install
+
+`use` writes `opencode.jsonc`. That file *points at* three other things: the
+instruction file in `instructions`, the agent files it declares per role, and the
+plugin that enforces the guard. All three can be absent while the config still
+validates and still looks correct — and, on a real install of this kit, all three
+were.
+
+The specific failure was invisible because `opencode agent list` simply does not
+print an agent that does not exist. A config declaring `reviewer`, `locate` and
+`verify` produced no error and no warning; the roles were invoked and quietly
+resolved to nothing.
+
+That is what `oc-harness install` and `oc-harness verify` exist for. Anything the
+compiler emits a reference to should have an installer and a checker; otherwise
+the generated file is a pointer to nothing.
+
 ## Model failover happens at the next session, never mid-flight
 
 No OpenCode plugin hook can change the model of a running session. Verified by
@@ -71,7 +137,9 @@ an agent can decide whether it is worth it, and the stub says so.
 `baseline.mjs` measures permission pressure with its own glob approximation of
 OpenCode's matcher, not OpenCode's matcher. It handles the cases that matter
 (bare commands, embedded newlines) but a discrepancy in the last few percent is
-possible. Treat the ratio as a guide, not an exact count.
+possible. Treat the ratio as a guide, not an exact count. It does import the
+real allowlist rather than keeping a copy, so the list cannot drift from what is
+actually shipped.
 
 ## What this kit does not do
 

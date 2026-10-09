@@ -8,7 +8,7 @@
 import { test } from "node:test"
 import assert from "node:assert/strict"
 import { execFileSync } from "node:child_process"
-import { mkdirSync, writeFileSync, rmSync, existsSync, readFileSync } from "node:fs"
+import { mkdirSync, writeFileSync, rmSync, existsSync, readFileSync, readdirSync, statSync } from "node:fs"
 import { join } from "node:path"
 import { tmpdir } from "node:os"
 
@@ -27,8 +27,19 @@ process.on("exit", () => rmSync(SANDBOX_CONFIG, { recursive: true, force: true }
 const ROOT = new URL("..", import.meta.url).pathname
 const DIST = join(ROOT, "dist", "index.js")
 
+// The mtime check matters because dist/ is a committed build artifact. Testing a
+// stale bundle proves nothing about the source it was generated from, so rebuild
+// whenever src/ is newer than dist/index.js.
+function newestSourceMtime() {
+  return readdirSync(join(ROOT, "src"), { recursive: true })
+    .filter((name) => /\.(ts|js)$/.test(String(name)))
+    .map((name) => statSync(join(ROOT, "src", String(name))).mtimeMs)
+    .reduce((newest, mtime) => Math.max(newest, mtime), 0)
+}
+
 function ensureBuild() {
-  if (!existsSync(DIST)) {
+  const stale = !existsSync(DIST) || statSync(DIST).mtimeMs < newestSourceMtime()
+  if (stale) {
     execFileSync("bun", ["build", "src/index.ts", "--outdir", "dist", "--target", "node", "--format", "esm"], {
       cwd: ROOT,
       stdio: "ignore",
@@ -147,7 +158,7 @@ test("config hook applies the profile's effort to the real config shape", async 
   assert.equal(config.agent.plan.variant, "max")
   assert.equal(config.agent.reviewer.variant, "max")
   assert.equal(config.agent.build.variant, "high")
-  assert.equal(config.agent.scout.variant, "low")
+  assert.equal(config.agent.locate.variant, "low")
   for (const agent of Object.values(config.agent)) {
     assert.equal(agent.model, "opencode/space-bunny-free")
   }

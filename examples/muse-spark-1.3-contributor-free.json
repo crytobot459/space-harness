@@ -28,7 +28,7 @@
     "plan": "max",
     "build": "high",
     "reviewer": "xhigh",
-    "scout": "low",
+    "locate": "low",
     "verify": "low"
   },
   "prune": {

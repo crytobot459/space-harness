@@ -6,18 +6,53 @@
 
 import { pruneThreshold, reservedTokens, resolveRoles, resolveDefaultVariant } from "./profile.js"
 
+import { join } from "node:path"
+import { homedir } from "node:os"
+
 /** @typedef {import("./profile.js").Profile} Profile */
+
+/**
+ * Where the global rule set lives, as opencode should be told to look for it.
+ *
+ * Honours OPENCODE_CONFIG_DIR, because `~/.config/opencode` is only the default
+ * and emitting it unconditionally points at the wrong file for anyone using a
+ * custom config directory - the installer would write one place and the
+ * compiler would name another. Written with a leading `~` when it is the
+ * default, which is both correct and readable in the generated file.
+ */
+export function globalInstructionsPath() {
+  const dir = process.env.OPENCODE_CONFIG_DIR ?? join(homedir(), ".config", "opencode")
+  if (dir === join(homedir(), ".config", "opencode")) return "~/.config/opencode/GLOBAL.md"
+  return join(dir, "GLOBAL.md")
+}
+
+/**
+ * The default location, for documentation and tests. Prefer
+ * `globalInstructionsPath()` when generating a config.
+ *
+ * It is written by `oc-harness install`, which symlinks this file rather than
+ * copying it, so the repo stays the source of truth. `oc-harness verify` fails if
+ * the path it names does not resolve - the failure mode where a config points at
+ * an instruction file that was never installed is silent and makes the whole
+ * harness a no-op.
+ */
+export const GLOBAL_INSTRUCTIONS = "~/.config/opencode/GLOBAL.md"
 
 /**
  * Read-only and verification commands.
  *
  * Measured against 5,239 real bash calls from one install: 95.3% would prompt
  * under a narrow allowlist, 23% under this one. The gated remainder is
- * deliberate - ssh, curl, rm, pkill, osascript, git add, cp, mv, kill, chmod,
- * docker.
+ * deliberate - ssh, curl, rm, pkill, osascript, cp, mv, kill, docker.
  *
  * `X*` with no space is used on purpose: opencode's `X *` pattern requires a
  * trailing space and therefore does not match a bare `X`.
+ *
+ * The `gh` verbs below are the read half of the CLI and nothing else. `gh pr
+ * create`, `gh pr merge` and `gh api` are NOT here: they write, and `gh api` in
+ * particular can POST to any endpoint. Measured cost of gating the whole `gh`
+ * surface was 146 prompts; gating only the mutating verbs keeps those 146
+ * prompt-free without opening a publish path the guard plugin cannot police.
  */
 export const BASH_ALLOWLIST = [
   "ls*", "cat*", "head*", "tail*", "wc*", "file*", "stat*", "pwd*", "env*", "printenv*",
@@ -31,6 +66,16 @@ export const BASH_ALLOWLIST = [
   "git status*", "git log*", "git diff*", "git show*", "git branch*",
   "git rev-parse*", "git config --get*", "git remote*", "git blame*",
   "git stash list*", "git ls-files*", "git describe*", "git shortlog*", "git --version*",
+  // `git -C <dir> <read-verb>` only. A bare `git -C *` would allow `git -C x push`.
+  "git -C * status*", "git -C * log*", "git -C * diff*", "git -C * rev-parse*",
+  "git -C * ls-files*", "git -C * show*",
+  // Staging is local and reversible; publishing is not and stays gated.
+  "git add*",
+  // `chmod 777` is denied below. `+x` is ordinary build work.
+  "chmod +x*", "chmod u+x*",
+  "mkdir*", "ps*",
+  "gh pr list*", "gh pr view*", "gh pr diff*", "gh pr checks*", "gh pr status*",
+  "gh issue list*", "gh issue view*", "gh repo view*", "gh auth status*",
   "PYTEST_DISABLE_PLUGIN_AUTOLOAD=1*", "PYTHONPATH=*", "PYTHONUNBUFFERED=1*",
   "python3 -m pytest*", "python3 -m venv*", "python3 -m compileall*",
   "python3 -c*", "python3 agent/*", "python3 src/*", "python3 -",
@@ -43,17 +88,43 @@ export const BASH_ALLOWLIST = [
 /** Hard blocks. The guard plugin enforces the same set in code. */
 export const BASH_DENYLIST = [
   "git push *",
+  "git push*",
   "rm -rf *",
+  "rm -fr *",
   "curl * | sh",
   "curl * | bash",
   "chmod 777 *",
+  "chmod 777*",
+  "gh pr create*",
+  "gh pr merge*",
+  "gh pr close*",
+  "gh release*",
+  "gh repo delete*",
 ]
+
+/**
+ * Iteration cap per role, written as `agent.<role>.steps`.
+ *
+ * `steps` is a loop breaker rather than a quality knob. On exhaustion OpenCode
+ * forces a text-only response, so an agent that has stopped making progress
+ * reports what it has instead of silently looping until the context is gone.
+ * The caps are sized to the role's real work: build gets room because it runs
+ * the edit-verify-fix cycle, verify gets room because a full suite is many
+ * commands, and the read-only roles are capped tight because they have one job.
+ */
+export const AGENT_STEPS = /** @type {Record<string, number>} */ ({
+  build: 40,
+  plan: 25,
+  reviewer: 15,
+  locate: 12,
+  verify: 20,
+})
 
 /** Roles the kit writes, with the permissions that keep them honest. */
 const AGENT_PERMISSIONS = /** @type {Record<string, Record<string, string>>} */ ({
   plan: { edit: "deny" },
   reviewer: { edit: "deny" },
-  scout: { edit: "deny", bash: "deny" },
+  locate: { edit: "deny", bash: "deny" },
   verify: { edit: "deny" },
 })
 
@@ -66,13 +137,17 @@ export function generateConfig(p, opts = {}) {
   const base = opts.base ?? {}
   const model = `${p.provider}/${p.model}`
   const roles = resolveRoles(p)
-  const variant = resolveDefaultVariant(p)
+  const instructionsPath = globalInstructionsPath()
 
   const agent = { ...(base.agent ?? {}) }
   for (const [role, level] of Object.entries(roles)) {
     if (level === undefined) continue
     const existing = { ...(agent[role] ?? {}) }
-    if (!existing.model) existing.model = model
+    // The model is pinned, never inherited. Preserving a model already written
+    // on the agent is how `build` ended up on a `may-train` model while the rest
+    // of the file claimed the profile's zero-retention one: the compiler was
+    // asked to re-run over a hand-edited config and kept the hand-edit.
+    existing.model = model
     if (level === null) delete existing.variant
     else existing.variant = level
     if (AGENT_PERMISSIONS[role]) {
@@ -81,6 +156,7 @@ export function generateConfig(p, opts = {}) {
         ...AGENT_PERMISSIONS[role],
       }
     }
+    if (AGENT_STEPS[role]) existing.steps = AGENT_STEPS[role]
     agent[role] = existing
   }
 
@@ -100,16 +176,30 @@ export function generateConfig(p, opts = {}) {
   compaction.prune = true
   compaction.reserved = reservedTokens(p)
 
+  const base_ = { ...base }
+  // Two keys are dropped from the inherited config outright rather than merged.
+  // Both are cases where an existing value silently defeats the compiler:
+  // `variant` is rejected by the schema and stripped at load, so keeping it
+  // makes the file look tiered while doing nothing; and `tool_output` set tight
+  // by an earlier version would otherwise survive every regeneration.
+  delete base_.variant
+  delete base_.tool_output
+
   const out = {
     $schema: "https://opencode.ai/config.json",
-    ...base,
+    ...base_,
 
     model,
-  // Same model, not a cheaper one: swapping models mid-session changes the
-  // voice and the tool habits. Lower the effort instead. An inherited
-  // small_model pointing at a different model is replaced, not preserved.
-  small_model: model,
-    ...(variant ? { variant } : {}),
+    // Same model, not a cheaper one: swapping models mid-session changes the
+    // voice and the tool habits. Lower the effort instead. An inherited
+    // small_model pointing at a different model is replaced, not preserved.
+    small_model: model,
+    // No top-level `variant`. The 1.18.35 Config schema sets
+    // `additionalProperties: false` and has no `variant` key, so OpenCode
+    // strips it from the resolved config - verified with `opencode debug
+    // config`. The per-role tiering is carried by `agent.<role>.variant`,
+    // which is a real schema key, and `effort.js` sets the session default at
+    // the `config` hook where the runtime does still see it.
     default_agent: base.default_agent ?? "build",
 
     // The default is 1, which blocks subagents from spawning subagents and so
@@ -117,13 +207,19 @@ export function generateConfig(p, opts = {}) {
     subagent_depth: base.subagent_depth ?? 2,
     // Omitting `lsp` disables it entirely, so this must be set explicitly.
     lsp: base.lsp ?? true,
-    instructions: base.instructions ?? ["~/.config/opencode/GLOBAL.md"],
+    instructions: base.instructions ?? [instructionsPath],
 
     compaction,
-    // Left alone deliberately: 200 lines / 8 KB is about 6x tighter than the
-    // 2000 / 51200 default and measurably keeps context small. Raising it
-    // trades context for fewer round trips.
-    tool_output: base.tool_output ?? { max_lines: 200, max_bytes: 8192 },
+    // OpenCode's own default (2000 lines / 51200 bytes), reached back from an
+    // earlier 200 / 8192. The tight setting truncated 415 of 2,959 measured
+    // `read` calls, and 418 calls were issued with an `offset` to fetch the
+    // rest: the truncation causes the re-read, one for one. At the measured
+    // 17.3s median per request that round trip costs far more than the tokens
+    // it saves, and prune.ts already bounds old tool output deterministically.
+    // Only 14 of 2,959 reads exceed 51,200 bytes, so this ceiling is not the
+    // thing that limits context. `oc-harness baseline` re-measures all four
+    // numbers if this ever needs arguing again.
+    tool_output: { max_lines: 2000, max_bytes: 51200 },
 
     skills: base.skills ?? {},
 
@@ -135,7 +231,23 @@ export function generateConfig(p, opts = {}) {
 
     permission: {
       ...(base.permission ?? {}),
-      read: base.permission?.read ?? "allow",
+      read: "allow",
+      // `allow` here is load-bearing in a way that is easy to get backwards, and
+      // it is pinned rather than inherited for the same reason the model is: an
+      // inherited `ask` survives regeneration and re-breaks every read-only
+      // role.
+      //
+      // OpenCode appends the global rule AFTER the agent's own, and last match
+      // wins, so a global `edit: "ask"` silently overrides every agent's
+      // `edit: "deny"` and the read-only roles can edit files after a prompt.
+      // `allow` is the implicit default and emits no rule at all, which leaves
+      // the per-agent `deny` intact. Writes outside the project are still
+      // gated by `external_directory`, which defaults to `ask`.
+      edit: "allow",
+      // OpenCode ships this as `deny` on every built-in agent, so a genuinely
+      // blocked agent has no cheap way to say so and falls back to prose. One
+      // structured question is cheaper to answer and easier to act on.
+      question: "allow",
       doom_loop: base.permission?.doom_loop ?? "ask",
       bash: bashRules,
     },
@@ -152,17 +264,18 @@ export function generateConfig(p, opts = {}) {
     },
   }
 
-  return render(out, p, { comments: opts.comments ?? true })
+  return render(out, p, { comments: opts.comments ?? true, instructionsPath })
 }
 
 /**
  * @param {Record<string, any>} cfg
  * @param {Profile} p
- * @param {{ comments: boolean }} opts
+ * @param {{ comments: boolean, instructionsPath?: string }} opts
  * @returns {string}
  */
 function render(cfg, p, opts) {
   const c = opts.comments ? "// " : ""
+  const instructionsPath = opts.instructionsPath ?? globalInstructionsPath()
   const input = p.limits.input ?? p.limits.context
   const levels = p.effort?.levels ?? []
   const roles = resolveRoles(p)
@@ -183,10 +296,17 @@ function render(cfg, p, opts) {
     `${c}  compaction.reserved  ${reservedTokens(p).toLocaleString("en-US")}  (${Math.round((p.effort?.reserveShare ?? 0.12) * 100)}% of the input cap, held back for reasoning growth)`,
     `${c}  prune threshold      ${pruneThreshold(p).toLocaleString("en-US")}  (input cap minus reserve)`,
     `${c}  role effort          ${Object.entries(roles).map(([k, v]) => `${k}=${v ?? "unset"}`).join("  ")}`,
+    `${c}  agent steps          ${Object.entries(AGENT_STEPS).filter(([r]) => roles[r]).map(([r, n]) => `${r}=${n}`).join("  ")}`,
   ]
 
   if (!levels.length) {
     head.push(`${c}`, `${c}This model publishes no tunable reasoning effort, so no variant is written.`)
+  } else {
+    head.push(
+      `${c}`,
+      `${c}Effort is per-role above. There is no top-level "variant" key: the 1.18.35`,
+      `${c}Config schema rejects it, and the router sets the session default at runtime.`,
+    )
   }
   if (p.supports?.temperature === false) {
     head.push(`${c}This model does not support temperature, so none is set.`)
@@ -196,6 +316,11 @@ function render(cfg, p, opts) {
       `${c}  prune keeps         ${p.prune.keepRecentToolCalls ?? 6} tool calls, ${p.prune.keepRecentTurns ?? 3} turns verbatim`,
     )
   }
+  head.push(
+    `${c}`,
+    `${c}Run "oc-harness verify" to check this file still matches the profile and`,
+    `${c}that the agents and ${instructionsPath} are actually installed.`,
+  )
 
   return `${head.join("\n")}\n${JSON.stringify(cfg, null, 2)}\n`
 }

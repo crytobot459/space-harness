@@ -160,9 +160,20 @@ async function measurePrompts() {
 }
 
 /**
- * Effort tiering, using the measured medians as the cost model.
- * These are per-model numbers from one install, so the output is an
- * estimate for that install, not a general claim.
+ * Effort tiering, as a projection rather than a measurement.
+ *
+ * The numbers below are per-request medians read off one install, and they are
+ * CROSS-MODEL: `max` comes from space-bunny-free, the lower tiers come from
+ * muse-spark-1.3-contributor-free. There are no per-variant medians on the same
+ * model to compare against, because the tiering had never actually run on
+ * space-bunny-free: `build` was hand-pinned to the muse-spark model, so every
+ * recorded message on the zero-retention route is at `max`.
+ *
+ * So this reports what the profile *claims* the split is worth under those
+ * medians, and says plainly that it is a projection. The real number comes from
+ * `oc-harness baseline`, which reports per-model-per-variant medians from the
+ * database. Once the tiering has been running for a while those two agree; until
+ * then they will not, and this output should not be quoted as a result.
  */
 async function measureEffort() {
   const { loadProfile, resolveRoles } = await import(join(ROOT, "src", "profile.js"))
@@ -172,7 +183,7 @@ async function measureEffort() {
   const roles = resolveRoles(p)
 
   // A realistic session: one plan, eight builds, two reviews, four verifications.
-  const mix = { plan: 1, build: 8, reviewer: 2, verify: 4, scout: 0 }
+  const mix = { plan: 1, build: 8, reviewer: 2, verify: 4, locate: 0 }
   let allMax = 0
   let tiered = 0
   for (const [role, count] of Object.entries(mix)) {
@@ -185,7 +196,11 @@ async function measureEffort() {
     allMaxSeconds: +allMax.toFixed(1),
     tieredSeconds: +tiered.toFixed(1),
     savedPct: +(((allMax - tiered) / allMax) * 100).toFixed(1),
-    caveat: "per-request medians measured on one model pair, not a general result",
+    measured: false,
+    caveat:
+      "PROJECTION, not a measurement: the max and lower-tier medians come from different models. " +
+      "No per-variant data exists for space-bunny-free because the tiering never ran on it. " +
+      "Run `oc-harness baseline` for the real per-variant medians.",
   }
 }
 
@@ -204,6 +219,22 @@ if (wantJson) {
 
 const n = (x) => Number(x).toLocaleString("en-US")
 const pad = (k) => k.padEnd(34)
+const stamp = (s) => `\x1b[2m${s}\x1b[0m`
+const wrap = (text, width) => {
+  const words = text.split(/\s+/)
+  const lines = []
+  let line = ""
+  for (const w of words) {
+    if ((line + " " + w).trim().length > width) {
+      lines.push(line.trim())
+      line = w
+    } else {
+      line += " " + w
+    }
+  }
+  if (line.trim()) lines.push(line.trim())
+  return lines
+}
 
 console.log(`\nopencode-harness-kit eval  ${report.generated}\n`)
 
@@ -219,11 +250,12 @@ console.log(`  ${pad("commands")} ${n(prompts.commands)}`)
 console.log(`  ${pad("prompts")} ${n(prompts.prompts)}  (${prompts.promptSharePct}%)`)
 console.log(`  ${pad("previously")} 95.3% with a narrow allowlist`)
 
-console.log("\nEFFORT TIERING  (measured medians: max 18.7s, lower tiers 7.8s)")
+console.log("\nEFFORT TIERING  (PROJECTION - cross-model medians, not a measurement)")
 console.log(`  ${pad("all-max session")} ${effort.allMaxSeconds}s`)
 console.log(`  ${pad("tiered session")} ${effort.tieredSeconds}s`)
-console.log(`  ${pad("saved")} ${effort.savedPct}%`)
-console.log(`  ${pad("caveat")} ${effort.caveat}`)
+console.log(`  ${pad("implied saving")} ${effort.savedPct}%`)
+console.log(`  ${pad("measured")} no`)
+for (const line of wrap(effort.caveat, 60)) console.log(`  ${pad("")} ${stamp(line)}`)
 
 if (compare) {
   const off = syntheticTranscript()

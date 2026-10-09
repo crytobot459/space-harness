@@ -27,8 +27,11 @@ export {
 } from "./profile.js"
 
 export {
+  AGENT_STEPS,
   BASH_ALLOWLIST,
   BASH_DENYLIST,
+  GLOBAL_INSTRUCTIONS,
+  globalInstructionsPath,
   generateConfig,
 } from "./config.js"
 

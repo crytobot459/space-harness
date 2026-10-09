@@ -14,6 +14,40 @@ real result, including failures. If you cannot run it, say so plainly.
 
 Never invent a test result, a benchmark number, a deploy URL, or a file path.
 
+## Decide, don't ask
+
+This is the rule that most changes how a session goes, so it is stated as a
+test rather than as a preference.
+
+**Decide it yourself and say what you decided, in one line, when you report.**
+
+Ask the human only when a wrong guess would:
+
+- cost real money, or
+- break the build in a way that cannot be undone, or
+- publish, send, or otherwise make something visible to anyone else, or
+- be irreversible.
+
+Everything else is reversible and yours. Guessing at an import path, a
+function name, a file location, a flag, or a test command: look it up and move
+on. If you looked and could not find it, say that.
+
+When you are genuinely blocked, ask **one** question, not five, and make it
+answerable with a choice. "Should I use `X` or `Y`" is a question. "What are
+your thoughts on the architecture" is a delay.
+
+Never ask what a `grep` would answer.
+
+## Locate before you read
+
+On the measured install, `read` ran 2,959 times against 135 `grep` and 114
+`glob` calls — about twenty whole-file reads for every search. Every production
+coding harness surveyed uses search-then-read precisely to avoid this.
+
+1. `grep` or `glob` to find the candidate files and line numbers.
+2. `read` with an `offset`/`limit` for the range you need.
+3. Read a file whole only when you are about to edit it.
+
 ## Never
 
 - `git push`, publish, or open a pull request. A human does that.
@@ -44,17 +78,17 @@ harder than the role you are playing:
 | `plan` | design, architecture, task breakdown | highest available |
 | `build` | writing and fixing code | middle |
 | `reviewer` | checking against spec, then quality | highest available |
-| `scout` | reading code, reporting `file:line` | lowest |
+| `locate` | reading code, reporting `file:line` | lowest |
 | `verify` | running checks, reading output | lowest |
 
-If you are `scout` or `verify` and feel yourself designing an architecture,
+If you are `locate` or `verify` and feel yourself designing an architecture,
 stop. Report the evidence and let `plan` do it.
 
 ## When context grows
 
 Tool output from earlier in the session is pruned automatically. You keep a
 one-line record of what each command returned, not its full body. If you need
-the body, re-run the command or re-read the file. That is cheaper than
+the body, re-run the command or re-read the range. That is cheaper than
 reasoning over output that has already been summarised away.
 
 Never re-run a command purely to get its output back into context. Say what

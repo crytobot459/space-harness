@@ -149,31 +149,12 @@ const topAskers = () => {
     .map(([head, count]) => ({ head, count }))
 }
 
-const kitAllowlist = [
-  // read-only inspection - `X*` covers both `X` and `X <args>`
-  "ls*", "cat*", "head*", "tail*", "wc*", "file*", "stat*", "pwd*", "env*", "printenv*",
-  "date*", "whoami*", "which*", "find*", "tree*", "du*", "df*", "lsof*", "sed*", "awk*",
-  "sort*", "uniq*", "diff*", "grep*", "rg*", "echo*", "printf*", "sleep*",
-  "cd*", "realpath*", "basename*", "dirname*", "readlink*",
-  // shell plumbing and comments
-  "for*", "set*", "export*", "unset*", "bash*", "sh*", "true*", "false*", "test*",
-  "read*", "#*", "xargs*", "seq*", "exit*", ":*",
-  // version probes
-  "node*", "python3*", "python*", "npm*", "bun*", "uv*", "go*", "cargo*", "rustc*",
-  "opencode*", "sqlite3*", "jq*", "fd*",
-  // git read-only
-  "git status*", "git log*", "git diff*", "git show*", "git branch*",
-  "git rev-parse*", "git config --get*", "git remote*", "git blame*",
-  "git stash list*", "git ls-files*", "git describe*", "git shortlog*", "git --version*",
-  // verification and builds
-  "PYTEST_DISABLE_PLUGIN_AUTOLOAD=1*", "PYTHONPATH=*", "PYTHONUNBUFFERED=1*",
-  "python3 -m pytest*", "python3 -m venv*", "python3 -m compileall*",
-  "python3 -c*", "python3 agent/*", "python3 src/*", "python3 -",
-  ".venv/bin/python*", "pytest*", "ruff*", "mypy*", "black*",
-  "npm test*", "npm run *", "npm ci*", "npm ls*", "npm view *",
-  "npx*", "uv run *", "uv pip *", "bun run *", "bunx*", "node -e*",
-  "opencode debug*", "opencode --version*", "opencode models*",
-]
+// Imported, not copied. This file used to keep its own transcription of the
+// allowlist, which meant the number it reported was whatever the list looked
+// like when the copy was last edited. Every tuning decision in this project is
+// supposed to rest on this measurement, so it has to measure the real list.
+const { BASH_ALLOWLIST } = await import(new URL("../src/config.js", import.meta.url))
+const kitAllowlist = BASH_ALLOWLIST
 const currentAllow = [
   "git status *", "git log *", "git diff *", "grep *",
   "python3 src/main.py *", "python3 -m pytest *",
@@ -187,6 +168,49 @@ const paidEquivalent =
   ((totals.input ?? 0) / 1e6) * RATE.input +
   ((totals.output + (totals.reasoning ?? 0)) / 1e6) * RATE.output +
   ((totals.cache_read ?? 0) / 1e6) * RATE.cacheRead
+
+// Truncation pressure: how many tool results were cut by `tool_output`, and how
+// much of that turned into an extra round trip.
+//
+// This exists because the kit once shipped max_lines 200 / max_bytes 8192 on
+// the reasoning that tight truncation "saves context", and a later install
+// measured 415 of 2,959 reads exceeding 8 KB against 418 reads issued with an
+// `offset`. Truncation causes the re-read roughly one for one, and at the
+// measured ~17s median per request that round trip is more expensive than the
+// tokens it saves. Re-run this before changing these numbers again.
+const TOOL = `json_extract(data,'$.type')='tool'`
+const readTruncation = query(
+  `select
+     count(*)                                                              as reads,
+     sum(case when length(coalesce(json_extract(data,'$.state.output'),'')) >  8192 then 1 else 0 end) as over_8k,
+     sum(case when length(coalesce(json_extract(data,'$.state.output'),'')) > 24576 then 1 else 0 end) as over_24k,
+     sum(case when length(coalesce(json_extract(data,'$.state.output'),'')) > 51200 then 1 else 0 end) as over_50k,
+     sum(case when json_extract(data,'$.state.metadata.display.totalLines') is not null
+              and json_extract(data,'$.state.metadata.display.lineEnd')
+                  < json_extract(data,'$.state.metadata.display.totalLines')
+          then 1 else 0 end)                                               as line_cut,
+     sum(case when json_extract(data,'$.state.input.offset') is not null then 1 else 0 end) as reread
+   from part where ${TOOL} and json_extract(data,'$.tool')='read'`,
+)[0]
+
+// Structured questions actually asked. A few is healthy; a stream of them means
+// the agent is asking instead of deciding, which is what GLOBAL.md's decision
+// rule exists to stop.
+const questionStats = query(
+  `select count(*) as asked from part where ${TOOL} and json_extract(data,'$.tool')='question'`,
+)[0]?.asked ?? 0
+
+// Search-before-read discipline. The paper in docs/KNOWN-LIMITS.md found no
+// production harness using embedding retrieval: all of them search first. A
+// read:grep ratio in the hundreds means the agent is loading whole files to
+// find out where something lives, which is the most expensive habit measured
+// anywhere in this kit.
+const toolCounts = query(
+  `select json_extract(data,'$.tool') as tool, count(*) as n from part where ${TOOL} group by 1`,
+)
+const toolByName = Object.fromEntries(toolCounts.map((r) => [r.tool, r.n]))
+const searches = (toolByName.grep ?? 0) + (toolByName.glob ?? 0) + (toolByName.list ?? 0)
+const reads = toolByName.read ?? 0
 
 const report = {
   database: DB,
@@ -221,6 +245,15 @@ const report = {
     share: +(((r.bytes ?? 0) / partTotal) * 100).toFixed(1),
   })),
   finishReasons: finish,
+  readPressure: {
+    reads,
+    searches,
+    readPerSearch: searches ? +((reads / searches)).toFixed(1) : null,
+    overBytes: { "8k": readTruncation.over_8k ?? 0, "24k": readTruncation.over_24k ?? 0, "50k": readTruncation.over_50k ?? 0 },
+    cutByLineCap: readTruncation.line_cut ?? 0,
+    rereadWithOffset: readTruncation.reread ?? 0,
+  },
+  questionPressure: { asked: questionStats },
   byModel: byModel.map((r) => {
     const lat = medianLatency.find((l) => l.model === r.model && l.variant === r.variant)
     return {
@@ -288,6 +321,19 @@ console.log("\nSTORED MESSAGE BYTES")
 for (const b of report.storedBytesByType) {
   line(b.type, `${String(b.megabytes).padStart(7)} MB  ${String(b.share).padStart(5)}%  (${n(b.count)} parts)`)
 }
+
+console.log("\nREAD PRESSURE")
+line("read calls", n(report.readPressure.reads))
+line("grep/glob/list", n(report.readPressure.searches))
+line("reads per search", `${report.readPressure.readPerSearch ?? "-"}  (whole-file reads to find code)`)
+line("reads over 8 KB", n(report.readPressure.overBytes["8k"]))
+line("reads over 24 KB", n(report.readPressure.overBytes["24k"]))
+line("reads over 50 KB", n(report.readPressure.overBytes["50k"]))
+line("cut by the 200-line cap", n(report.readPressure.cutByLineCap))
+line("re-reads with an offset", `${n(report.readPressure.rereadWithOffset)}  (this is the cost the line cap created)`)
+
+console.log("\nQUESTIONS ASKED")
+line("question tool calls", n(report.questionPressure.asked))
 
 console.log("\nBY MODEL")
 for (const r of report.byModel) {

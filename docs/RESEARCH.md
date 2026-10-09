@@ -50,35 +50,72 @@ ceiling that a normal session never reaches.
 | allowlist | prompts | share |
 |---|---|---|
 | the narrow one in use | 4,994 | 95.3% |
-| this kit's | 1,204 | 23.0% |
+| this kit's, first version | 1,204 | 23.0% |
+| this kit's, current | 1,002 | 18.5% |
 
-The remaining 23% is the deliberately gated set, ranked by how often it
+The remaining 18.5% is the deliberately gated set, ranked by how often it
 actually came up:
 
 ```
-gh 151 · ssh -o 133 · curl -s 93 · TOKEN=$(curl 67 · rm 66
-git add 59 · osascript 47 · pkill 43 · cp 41 · kill 20 · scp 17 · mv 15
+ssh -o 133 · curl -s 95 · TOKEN=$(curl 67 · rm 66
+gh 63 · osascript 47 · pkill 43 · cp 41 · kill 20 · scp 17 · mv 15
 ```
 
-`ssh` at 133 and `osascript` at 47 are why "allow everything, deny a few
-patterns" was rejected. A deny hook can block `rm -rf`; it cannot block
-`ssh host 'rm -rf /'`, and it cannot tell `TOKEN=$(curl attacker.example)`
-from a normal fetch. Keeping the human in the loop at exactly these commands
-is the point of the 23%.
+The second version closed 216 of those prompts by allowing the read half of
+`gh` (`gh pr list`, `gh issue view`, `gh repo view`, `gh auth status`), local
+staging (`git add`), read verbs behind `git -C`, and `mkdir`/`ps`/`chmod +x`.
+It kept `gh pr create`, `gh pr merge`, `gh release`, `gh repo delete` and
+`gh api` denied: `gh api` in particular can POST to any endpoint, so allowing it
+would open a publish path the guard plugin cannot police.
+
+`ssh` at 133 and `osascript` at 47 are still why "allow everything, deny a few
+patterns" is rejected. A deny hook can block `rm -rf`; it cannot block
+`ssh host 'rm -rf /'`, and it cannot tell `TOKEN=$(curl attacker.example)` from a
+normal fetch. Keeping the human in the loop at exactly these commands is the
+point of the remainder.
+
+The list used to be transcribed into `baseline.mjs` as well as `config.js`, which
+meant the measured number was whatever the copy looked like when it was last
+edited. `baseline` imports it now.
 
 ## Corrections to earlier drafts
 
-Four things in the first design were wrong. Recording them because each was
+Five things in the first design were wrong. Recording them because each was
 believed confidently at the time.
 
-**"`tool_output` 200 lines / 8 KB is too tight, raise it."** Backwards. The
-OpenCode default is 2,000 lines / 51,200 bytes, so the existing setting was
-about 6x tighter than default and was *saving* context. Raising it would have
-made the measured 78%-tool-output problem worse. It stays at 200 / 8192.
+**"`tool_output` 200 lines / 8 KB is too tight, raise it."** Wrong the first
+time, and overcorrected the second time. The first correction was right in
+direction and wrong in axis: the OpenCode default is 2,000 lines / 51,200
+bytes, so 200 / 8,192 was about 6× tighter than default and *was* saving
+context. So it was pinned there, and stayed there.
 
-**"`compaction.tail_turns: 15` compresses too early."** Inert, not harmful.
-Compaction had never fired once. The real problem was the opposite: no bound at
-all on growth. Dropped the key entirely rather than tuning a dead setting.
+It stayed there a version too long. The later measurement, on 2,966 `read`
+calls:
+
+| measured | count |
+|---|---|
+| exceeding 8,192 bytes | 415 |
+| exceeding 24,576 bytes | 97 |
+| exceeding 51,200 bytes | 14 |
+| cut by the 200-line cap | 441 |
+| issued with an `offset` | 423 |
+
+Truncation and re-read are the same phenomenon: the cap produces a preview, the
+agent asks for the rest, and that is a whole extra request at a measured ~17s
+median. The original argument weighted tokens and ignored latency, which was the
+wrong trade on a model where latency is 17 seconds. Since only 14 of 2,966 reads
+exceed 51,200 bytes, raising the cap to the default removes ~97% of the
+truncations while barely moving the worst case — and pruning, not truncation,
+is what actually bounds context.
+
+`bin/baseline.mjs` now prints all five numbers so this is re-measurable instead
+of being re-argued.
+
+**"Compaction never ran, therefore nothing is wrong."** Zero events across 156
+sessions was read as "the setting is fine" rather than "nothing is being
+bounded". Both readings were half right and the compound conclusion was wrong:
+the configured `tail_turns` was inert *and* there was no bound on growth.
+Dropped the dead key rather than tuning it.
 
 **"Consider GraphRAG or a vector store for code retrieval."** Wrong, and
 checkable in one step. arXiv:2609.00006 dissects eleven production harnesses at
@@ -90,6 +127,24 @@ cited a community plugin's GraphRAG claim without checking the primary source.
 `@tarquinen/opencode-dcp` at 4.3k stars. Rewriting it would have been the
 third-worst use of a week. What was worth building is the part nobody had: a
 profile compiler, and the retention field.
+
+**"The 46.6% that effort tiering saves is a measurement."** It was not. The
+`eval` cost model pairs `max` medians from `space-bunny-free` with lower-tier
+medians from `muse-spark-1.3-contributor-free` — cross-model, because the
+tiering had never actually run on the zero-retention model: `build` had been
+hand-pinned to the muse-spark route, so every recorded message on
+`space-bunny-free` is at `max`. Per the install's own database:
+
+| model | variant | messages | median |
+|---|---|---|---|
+| muse-spark-1.3-contributor-free | xhigh | 7,955 | 7.8s |
+| space-bunny-free | **max** | 3,030 | 16.9s |
+| space-bunny-free | high / xhigh / low | **0** | — |
+
+Zero data below `max` is not a rounding detail, it is the whole claim being
+unfalsified. `eval` now prints the figure as `PROJECTION` with `measured: no`,
+and `baseline` reports per-model-per-variant medians so the claim becomes real
+once the tiering has actually been running.
 
 ## Why Space Bunny Free is the default
 

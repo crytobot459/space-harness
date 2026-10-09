@@ -26,7 +26,7 @@ import { loadProfile, resolveRoles, resolveDefaultVariant } from "./profile.js"
  */
 
 /** Roles the kit manages. A role a profile does not mention is left alone. */
-export const MANAGED_ROLES = ["plan", "build", "reviewer", "scout", "verify"]
+export const MANAGED_ROLES = ["plan", "build", "reviewer", "locate", "verify"]
 
 /**
  * @param {string} profileId

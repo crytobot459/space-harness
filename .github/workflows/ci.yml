@@ -17,6 +17,8 @@ jobs:
         with:
           node-version: ${{ matrix.node }}
       - run: npm install --no-audit --no-fund
+      # dist/ is committed, so rebuild before the tests that import it.
+      - run: npm run build
       - run: npm run typecheck
       - run: npm test
       - name: CLI smoke test
@@ -24,9 +26,17 @@ jobs:
           node bin/oc-harness.mjs list
           node bin/oc-harness.mjs show space-bunny-free
           node bin/oc-harness.mjs use space-bunny-free --print | tail -20
-          node bin/oc-harness.mjs use longcat-2.5-preview-free --print | grep -c '"variant"' || true
-      - name: Profiles match live metadata
-        run: node bin/oc-harness.mjs doctor
+          node bin/oc-harness.mjs use longcat-2.5-preview-free --print | grep -q '"variant"'
+      - name: install and verify into a scratch config dir
+        run: |
+          export OPENCODE_CONFIG_DIR="$RUNNER_TEMP/opencode-config"
+          node bin/oc-harness.mjs use space-bunny-free --yes
+          node bin/oc-harness.mjs install
+          node bin/oc-harness.mjs verify
+          node bin/oc-harness.mjs agents
+          # Reuses the same scratch config dir, so the config-drift check inside
+          # doctor reads the config installed above instead of the runner's.
+          node bin/oc-harness.mjs doctor
 
   publish:
     needs: test
