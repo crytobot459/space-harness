@@ -1,0 +1,34 @@
+{
+  "$comment": [
+    "TypeScript subject. The kit is TypeScript and the Python suite in tasks.json",
+    "never tested that, which is the gap this file exists to close.",
+    "",
+    "Subject is vendor/gibwork-sentinel from gibwork-agent-harness: 692 lines of",
+    "TypeScript across 7 modules, shipped alongside compiled JavaScript in dist/.",
+    "Every answer below occurs in src/ and again in dist/. Each task says so",
+    "explicitly, because picking the build output instead of the source is the",
+    "trap and the reason this subject is worth having.",
+    "",
+    "All three wants were checked to occur in exactly one file under src/.",
+    "That check is what stops an ambiguous task - two of the earlier ones were",
+    "wrong for exactly that reason."
+  ],
+  "snapshot": "gibwork-agent-harness/vendor/gibwork-sentinel (not a git repo, copied as-is)",
+  "tasks": [
+    {
+      "id": "ts-rpc-default",
+      "task": "This package is shipped as both TypeScript sources and compiled JavaScript. In the TypeScript source only, not the build output, which module declares the default Solana RPC endpoint, and what is that URL? Report the file and line. Do not modify any files.",
+      "want": "https://api.mainnet-beta.solana.com"
+    },
+    {
+      "id": "ts-rest-client",
+      "task": "This package is shipped as both TypeScript sources and compiled JavaScript. In the TypeScript source only, not the build output, which module exports the class that talks to the Gibwork REST API? Report the file and line. Do not modify any files.",
+      "want": "export class GibworkClient"
+    },
+    {
+      "id": "ts-pr-template",
+      "task": "This package is shipped as both TypeScript sources and compiled JavaScript. In the TypeScript source only, not the build output, one module writes a pull request template file into the generated workspace. Which module writes it, and what is the filename? Report the file and line. Do not modify any files.",
+      "want": "PULL_REQUEST_TEMPLATE.md"
+    }
+  ]
+}

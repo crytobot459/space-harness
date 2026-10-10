@@ -104,6 +104,46 @@ That is the mechanism the whole kit rests on, and it is the one thing the
 correlation in Results 1 and 2 could not show. The kit does not shrink what it
 costs; it shrinks what the agent drags along behind it.
 
+## The A/B on TypeScript
+
+    node eval/ab.mjs --target <dir> --suite eval/tasks-ts.json --reps 1 --sanitize
+
+**A pilot, not a result. Three runs per arm.** The kit is written in TypeScript
+and the suite above is Python, which is the wrong language for the code being
+judged. This closes the gap just enough to say whether the harness works there.
+
+Subject: `vendor/gibwork-sentinel` from `gibwork-agent-harness` - 692 lines of
+TypeScript in seven modules, shipped beside compiled JavaScript in `dist/`. Every
+answer occurs in `src/` *and again* in `dist/`, so each task says "in the
+TypeScript source only". An agent that greps and stops at the build output is
+wrong, which is the whole reason this subject is worth having. All three answers
+were checked to occur in exactly one file under `src/` before the tasks were
+written, because two earlier tasks were wrong for failing that check.
+
+| Metric (median of 3) | kit on | kit off |
+| --- | --- | --- |
+| wall seconds | 21.3 | 30.9 |
+| tool calls | 4 | 2 |
+| narrow reads | 100% | 0% |
+| final context | 10,758 | 9,411 |
+| correct | 3 / 3 | 3 / 3 |
+| paths outside target | 0 | 0 |
+
+Both arms got all three, and both named `src/solana.ts:19` for the RPC default.
+The kit-on answer went further: it noted that the only other occurrences are a
+README badge and the compiled copy, and dismissed both.
+
+Six runs cannot separate a 21.3s arm from a 30.9s arm, and neither can settle
+whether reading narrowly costs an extra tool call. What this establishes is
+narrower and worth stating plainly: **the grader, the escape detector and the
+suite all work on a second language and on a subject that fights back.**
+
+### What this does not establish
+
+- **n=3 per arm.** A pilot. Run `--reps 2` or more before quoting any number.
+- **One small package, and every task is a lookup.** Not the kit's own codebase.
+- **No edit task here.** The editing task lives in the Python suite only.
+
 ## What these numbers do not prove
 
 **The two windows are not the same work.** The before-window is dominated by
@@ -178,8 +218,6 @@ Result 2 and 3, which is another reason not to read much into them.
   Correctness is a tie; a tie on twenty runs is not proof of equivalence.
 - **The speed difference changed sign between two suite runs.** 18.4 against
   32.7, then 25.4 against 17.4. Nothing in this file can support a speed claim.
-- **The subject is a Python repo, not TypeScript.** The kit's own code is
-  TypeScript and is untested here.
 - **Four of five tasks are still lookups.** The edit task is one line in one
   file. Nothing here measures a long multi-step refactor, where a stricter
   reading habit might cost more than it saves.
