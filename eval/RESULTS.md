@@ -145,7 +145,7 @@ The answer is `agent/judge.py:348`, `total >= 7`.
 
 | Metric (median of 3) | kit on | kit off |
 | --- | --- | --- |
-| wall seconds | 146.8 | 423.7 |
+| wall seconds | 14.7 | 42.4 |
 | tool calls | 7 | 3 |
 | grep/glob | 3 | 1 |
 | read calls | 2 | 1 |
@@ -153,13 +153,12 @@ The answer is `agent/judge.py:348`, `total >= 7`.
 | answers naming `judge.py` | 2 / 3 | 1 / 3 |
 | paths outside target | 0 | 0 |
 
-Per run, kit off took 2,626.8s, 423.7s and 73.3s; kit on took 154.7s, 146.8s and
-84.7s. Medians, not means - one 44-minute outlier would dominate a mean of three
-and make the kit look three times slower than it is.
+Per run, kit off took 262.7s, 42.4s and 7.3s; kit on took 15.5s, 14.7s and
+8.5s. Medians, not means: the single 262.7s run drags the kit-off mean to
+104.1s, which would make the kit look 8x slower than the medians show.
 
-Most of both columns is carried by that single kit-off outlier, which made zero
-Most of both columns is carried by that single kit-off outlier, which made three
-bash calls, zero searches, zero reads in 44 minutes and returned the wrong file.
+Most of both columns is carried by that one kit-off run, which made three bash
+calls, zero searches, zero reads in 4.4 minutes and returned the wrong file.
 Strip it out and the remaining two kit-off runs bracket the kit-on runs. Treat
 the table as one good result and one bad one, not as a ratio.
 
@@ -169,19 +168,33 @@ the table as one good result and one bad one, not as a ratio.
   A different task could invert it, and nothing here says it will not.
 - **The subject is a Python repo, not TypeScript.** The kit's own tests and
   effects are elsewhere.
-- **Correctness is scored by substring match, and the first matcher was too
-  loose.** Both arms independently found `judge.py:348`, so `--expect` learned to
-  accept alternatives separated by `|`. Written as `--expect "judge.py|7"` it
-  then accepted any answer containing the digit 7, which is any line number, and
-  reported 3/3 against 1/3. That 3/3 was the matcher failing, not the kit. The
-  table above scores strictly on `judge.py` and reads 2/3 against 1/3. Keep `|`
-  for genuinely equivalent answers and never for a bare digit.
+- **Correctness is scored by substring match.** A file name is a strong enough
+  token; see "What went wrong getting here" for the loose version of this check
+  and the number it produced.
 - **Wall clock is not controlled for load.** Arms alternate, which helps, but
   six runs share one model route.
 
 ### What went wrong getting here
 
-The first pilot produced no usable number, for a reason worth recording.
+Two measurement bugs survived long enough to be written down here as results.
+Both are recorded because the pattern is the same: a tool I wrote reported a
+number, and the number looked plausible.
+
+**Durations were ten times too large.** OpenCode event timestamps are in
+milliseconds; `ab.mjs` divided by 100. A 4.4 minute run was reported as 44
+minutes and every duration in the first version of this table was scaled by 10.
+The ratios were unaffected, which is exactly why it went unnoticed - only
+checking an absolute number against a wall clock catches a constant factor.
+`elapsedSeconds()` now lives in `metrics.js` with a test that pins the unit.
+
+**The correctness matcher was too loose, in the other direction.** Both arms
+independently found `judge.py:348`, so `--expect` learned to accept
+alternatives separated by `|`. Written as `--expect "judge.py|7"` it accepted any
+answer containing the digit 7, which is any line number, and reported 3/3
+against 1/3 on answers that had not found the file at all. The table above
+scores strictly on `judge.py` and reads 2/3 against 1/3.
+
+The first pilot produced no usable number either, for a reason worth recording.
 Nested inside a running opencode session, `opencode run` inherits the *parent*
 session's project directory. Both arms ignored the target entirely and read
 `/Users/admin/harness/space-harness`; the kit-off arm ran 15 file paths and 9

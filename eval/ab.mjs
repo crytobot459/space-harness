@@ -25,6 +25,8 @@ import { createHash } from "node:crypto"
 import { homedir, tmpdir } from "node:os"
 import { join } from "node:path"
 
+import { elapsedSeconds } from "./metrics.js"
+
 const args = process.argv.slice(2)
 const flag = (...n) => {
   const i = args.findIndex((a) => n.includes(a))
@@ -173,7 +175,7 @@ function parseStream(file) {
     inputTokens,
     reasoning,
     finalCtx,
-    seconds: first !== null && last !== null ? Math.round((last - first) / 100) / 10 : null,
+    seconds: first !== null && last !== null ? elapsedSeconds(first, last) : null,
     text,
     escaped: [...escaped],
   }

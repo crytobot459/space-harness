@@ -30,6 +30,20 @@ export function historyPerTurn(history, turns) {
 }
 
 /**
+ * Wall time between two opencode event timestamps.
+ *
+ * Those timestamps are milliseconds, and dividing by 100 instead of 1000 made
+ * every duration in eval/RESULTS.md ten times too large for one commit - a
+ * 4.4 minute run was reported as 44 minutes. The ratios survived because the
+ * error is a constant factor, which is exactly why it went unnoticed until the
+ * absolute numbers were checked against a wall clock.
+ */
+export function elapsedSeconds(fromMs, toMs) {
+  if (!Number.isFinite(fromMs) || !Number.isFinite(toMs)) return null
+  return Math.round((toMs - fromMs) / 100) / 10
+}
+
+/**
  * Whether the kit pays for itself: the fixed overhead it adds to every request
  * versus the history it removes per session. Positive means it costs more.
  *

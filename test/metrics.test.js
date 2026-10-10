@@ -6,7 +6,7 @@
 import { test } from "node:test"
 import assert from "node:assert/strict"
 
-import { pct, readsPerSearch, ctxDropPct, historyPerTurn, payback } from "../eval/metrics.js"
+import { pct, readsPerSearch, ctxDropPct, historyPerTurn, payback, elapsedSeconds } from "../eval/metrics.js"
 
 test("pct reports the share of narrow reads", () => {
   assert.equal(pct(181, 277), 65.3)
@@ -59,4 +59,17 @@ test("payback is decided by the sign of the two deltas together", () => {
   assert.equal(payback(469, -100), false)
   // A kit that adds nothing and removes history still pays.
   assert.equal(payback(0, -1), true)
+})
+
+test("elapsedSeconds converts opencode millisecond timestamps", () => {
+  // Event timestamps are milliseconds. Dividing by 100 instead of 1000 reported
+  // a 4.4 minute run as 44 minutes in RESULTS.md.
+  assert.equal(elapsedSeconds(1791594309947, 1791594572628), 262.7)
+  assert.equal(elapsedSeconds(0, 1000), 1)
+  assert.equal(elapsedSeconds(500, 500), 0)
+})
+
+test("elapsedSeconds refuses to invent a duration from bad input", () => {
+  assert.equal(elapsedSeconds(null, 1000), null)
+  assert.equal(elapsedSeconds(0, undefined), null)
 })
