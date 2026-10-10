@@ -18,7 +18,9 @@
 //   node eval/run.mjs --json         machine-readable
 //   node eval/run.mjs --compare      measure with the kit disabled, for a diff
 
+import { execFileSync } from "node:child_process"
 import { existsSync } from "node:fs"
+import { homedir } from "node:os"
 import { dirname, join } from "node:path"
 import { fileURLToPath } from "node:url"
 
@@ -162,47 +164,141 @@ async function measurePrompts() {
 }
 
 /**
- * Effort tiering, as a projection rather than a measurement.
+ * Effort tiering, measured from the install database where that is possible.
  *
- * The numbers below are per-request medians read off one install, and they are
- * CROSS-MODEL: `max` comes from space-bunny-free, the lower tiers come from
- * muse-spark-1.3-contributor-free. There are no per-variant medians on the same
- * model to compare against, because the tiering had never actually run on
- * space-bunny-free: `build` was hand-pinned to the muse-spark model, so every
- * recorded message on the zero-retention route is at `max`.
+ * Per-variant medians are read for the profile's own model, so this no longer
+ * mixes models the way it used to. When every variant the role map depends on is
+ * present, the output is labelled measured; otherwise it falls back to the
+ * fixed constants below and says so, rather than substituting one tier's median
+ * for another.
  *
- * So this reports what the profile *claims* the split is worth under those
- * medians, and says plainly that it is a projection. The real number comes from
- * `oc-harness baseline`, which reports per-model-per-variant medians from the
- * database. Once the tiering has been running for a while those two agree; until
- * then they will not, and this output should not be quoted as a result.
+ * Even when measured, the saving is a median mix projected over a session, not
+ * an end-to-end session measurement. `oc-harness baseline` reports the same
+ * per-variant medians with sample sizes.
  */
+/**
+ * Per-variant median request latency for one model, straight from the install
+ * database. Returns null when the database is missing or has no data for that
+ * model, so the caller can fall back rather than invent a number.
+ *
+ * Median ranks match bin/baseline.mjs: rank (n+1)/2 for odd n, the mean of the
+ * two middle ranks for even n.
+ *
+ * The query is transcribed rather than imported because bin/baseline.mjs runs
+ * its whole report at module top level and calls process.exit, so importing it
+ * would print the baseline report and kill this run. Keep the two in step when
+ * either changes.
+ */
+function mediansForModel(modelID, providerID) {
+  const db = join(homedir(), ".local/share/opencode/opencode.db")
+  if (!existsSync(db)) return null
+
+  const sql = `
+    select variant, printf('%.1f', avg(ms)) as median_ms, n
+    from (
+      select variant, ms, rn, n
+      from (
+        select coalesce(json_extract(data,'$.variant'),'(default)') as variant,
+               (json_extract(data,'$.time.completed')
+                - json_extract(data,'$.time.created')) / 1000.0 as ms,
+               row_number() over (
+                 partition by coalesce(json_extract(data,'$.variant'),'(default)')
+                 order by (json_extract(data,'$.time.completed')
+                           - json_extract(data,'$.time.created')) / 1000.0) as rn,
+               count(*) over (
+                 partition by coalesce(json_extract(data,'$.variant'),'(default)')) as n
+        from message
+        where json_extract(data,'$.role') = 'assistant'
+          ${providerID ? `and json_extract(data,'$.providerID') = '${providerID.replace(/'/g, "''")}'` : ""}
+          and json_extract(data,'$.modelID') = '${modelID.replace(/'/g, "''")}'
+          and (json_extract(data,'$.time.completed')
+               - json_extract(data,'$.time.created')) / 1000.0 > 0
+      )
+    )
+    where rn = cast((n + 1) / 2 as integer)
+       or (n % 2 = 0 and rn = cast((n + 2) / 2 as integer))
+    group by variant, n`
+
+  let rows
+  try {
+    rows = JSON.parse(
+      execFileSync("sqlite3", ["-json", `file:${db}?mode=ro`, sql], {
+        encoding: "utf8",
+        maxBuffer: 64 * 1024 * 1024,
+      }).trim() || "[]",
+    )
+  } catch {
+    return null
+  }
+  if (!rows.length) return null
+
+  const MEDIAN = {}
+  const samples = {}
+  for (const r of rows) {
+    MEDIAN[r.variant] = Number(r.median_ms)
+    samples[r.variant] = r.n
+  }
+  return { MEDIAN, samples, source: "measured" }
+}
+
 async function measureEffort() {
   const { loadProfile, resolveRoles } = await import(join(ROOT, "src", "profile.js"))
 
-  const MEDIAN = { max: 18.7, xhigh: 7.8, high: 7.8, medium: 7.8, low: 7.8 }
+  const FALLBACK = { max: 18.7, xhigh: 7.8, high: 7.8, medium: 7.8, low: 7.8 }
   const p = loadProfile("space-bunny-free")
   const roles = resolveRoles(p)
 
   // A realistic session: one plan, eight builds, two reviews, four verifications.
   const mix = { plan: 1, build: 8, reviewer: 2, verify: 4, locate: 0 }
+
+  // Every variant this report depends on has to have been measured. A missing
+  // one must not be substituted with another tier's median: that would print a
+  // number under a "measured" header for a tier that was never measured.
+  const needed = new Set([...Object.values(roles).filter(Boolean), "max"])
+  const found = mediansForModel(p.model, p.provider)
+  const complete = found && [...needed].every((v) => typeof found.MEDIAN[v] === "number")
+
+  const { MEDIAN, samples, source } = complete
+    ? found
+    : { MEDIAN: FALLBACK, samples: {}, source: "projection" }
+
   let allMax = 0
   let tiered = 0
   for (const [role, count] of Object.entries(mix)) {
     allMax += count * MEDIAN.max
     const level = roles[role]
-    tiered += count * (level ? (MEDIAN[level] ?? MEDIAN.max) : MEDIAN.max)
+    tiered += count * MEDIAN[level ?? "max"]
   }
+  // Only the variants this report actually depends on: the completeness gate
+  // covers these, so listing anything else would print unchecked numbers under
+  // a measured header.
+  const shown = Object.entries(samples).filter(([v]) => needed.has(v))
+  const thin = shown.filter(([, n]) => n < 30)
+
   return {
     mix,
+    source,
+    medians: MEDIAN,
+    samples: Object.fromEntries(shown),
     allMaxSeconds: +allMax.toFixed(1),
     tieredSeconds: +tiered.toFixed(1),
     savedPct: +(((allMax - tiered) / allMax) * 100).toFixed(1),
-    measured: false,
+    measured: source === "measured",
     caveat:
-      "PROJECTION, not a measurement: the max and lower-tier medians come from different models. " +
-      "No per-variant data exists for space-bunny-free because the tiering never ran on it. " +
-      "Run `oc-harness baseline` for the real per-variant medians.",
+      source === "measured"
+        ? thin.length
+          ? `Median per request on this model from the install database. ` +
+            `Treat the tiers with few samples as indicative only: ` +
+            thin.map(([v, n]) => `${v} (n=${n})`).join(", ") +
+            `. The saving below is that median mix projected over a session, ` +
+            `not a measured end-to-end session.`
+          : `Median per request on this model from the install database, ` +
+            `projected over a session mix. Not an end-to-end session measurement.`
+        : `PROJECTION, not a measurement: no complete per-variant data for ` +
+          `${p.model} in the install database, so fixed constants are used. ` +
+          `The cause may be a missing or unreadable database, or a variant ` +
+          `that has not been exercised yet. \`oc-harness baseline\` reports ` +
+          `per-variant medians with sample sizes and will say which is which.`,
   }
 }
 
@@ -252,11 +348,22 @@ console.log(`  ${pad("commands")} ${n(prompts.commands)}`)
 console.log(`  ${pad("prompts")} ${n(prompts.prompts)}  (${prompts.promptSharePct}%)`)
 console.log(`  ${pad("previously")} 95.3% with a narrow allowlist`)
 
-console.log("\nEFFORT TIERING  (PROJECTION - cross-model medians, not a measurement)")
+const tierHeader = effort.measured
+  ? "EFFORT TIERING  (medians measured on this model, projected over a session mix)"
+  : "EFFORT TIERING  (PROJECTION - cross-model medians, not a measurement)"
+console.log(`\n${tierHeader}`)
 console.log(`  ${pad("all-max session")} ${effort.allMaxSeconds}s`)
 console.log(`  ${pad("tiered session")} ${effort.tieredSeconds}s`)
 console.log(`  ${pad("implied saving")} ${effort.savedPct}%`)
-console.log(`  ${pad("measured")} no`)
+console.log(`  ${pad("measured")} ${effort.measured ? "per-variant medians yes, session no" : "no"}`)
+if (effort.measured) {
+  // Print from samples, not medians: both are restricted to the variants the
+  // completeness gate checked, so they cannot drift apart here.
+  const med = Object.entries(effort.samples)
+    .map(([v, n]) => `${v} ${effort.medians[v]}s (n=${n})`)
+    .join(", ")
+  console.log(`  ${pad("median per request")} ${stamp(med)}`)
+}
 for (const line of wrap(effort.caveat, 60)) console.log(`  ${pad("")} ${stamp(line)}`)
 
 if (compare) {
