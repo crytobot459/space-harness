@@ -17,10 +17,10 @@ jobs:
         with:
           node-version: ${{ matrix.node }}
       - run: npm install --no-audit --no-fund
-      # dist/ is committed, so rebuild before the tests that import it.
-      - run: npm run build
-      - run: npm run typecheck
-      - run: npm test
+      # dist/ is committed, so test:all rebuilds before the tests that import it.
+      # test:all is deliberately the offline subset: measure/attribute read the
+      # install database and ~/.config/opencode, neither of which exists here.
+      - run: npm run test:all
       - name: CLI smoke test
         run: |
           node bin/oc-harness.mjs list

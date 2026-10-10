@@ -299,11 +299,27 @@ so switching happens at the next session, not mid-flight.
 
 ```bash
 npm install
-npm test          # 53 tests, including the model-agnostic assertions
-npm run typecheck
-npm run eval      # synthetic: pruning, prompt pressure, effort projection
-npm run baseline  # your own install
+npm run check        # everything: build, typecheck, tests, live install, verify
 ```
+
+Or one layer at a time:
+
+```bash
+npm test             # 62 tests, including the model-agnostic assertions
+npm run typecheck
+npm run eval         # synthetic: pruning, prompt pressure, effort projection
+npm run measure      # is this install behaving? narrow reads, context
+npm run attribute    # where the context went: fixed overhead vs history
+npm run baseline     # your own install, from scratch
+```
+
+`npm test` and `npm run typecheck` need nothing but the repo, so CI runs those.
+The rest read `~/.local/share/opencode/opencode.db` and `~/.config/opencode`,
+which only exist on a machine that has run OpenCode with the kit installed -
+`npm run check:online` additionally hits the model catalog over the network.
+
+Measured results, and the limits they do not cross, are in
+[eval/RESULTS.md](eval/RESULTS.md).
 
 `docs/RESEARCH.md` records where the numbers came from and what was tried and
 rejected.
