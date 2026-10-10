@@ -9,7 +9,7 @@ import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 
-import { extractRefs, resolveInTarget, gradeAnswer } from "../eval/verify.mjs"
+import { extractRefs, resolveInTarget, gradeAnswer, gradeMutation } from "../eval/verify.mjs"
 
 // A three-file fixture shaped like the snapshots the suite runs against.
 function fixture() {
@@ -36,6 +36,43 @@ test("extractRefs finds the citation shapes an agent actually writes", () => {
   assert.ok(found.includes("agent/score.py:5"), "path:line")
   assert.ok(found.some((f) => f.startsWith("agent/score.py:")), "bare path")
   assert.ok(found.includes("agent/other.py:1"), "path (line)")
+})
+
+test("gradeMutation requires a repeated edit in every place, not just one", () => {
+  const root = mkdtempSync(join(tmpdir(), "verify-mut-"))
+  mkdirSync(join(root, "agent"), { recursive: true })
+  const write = (body) => writeFileSync(join(root, "agent/rubric.py"), body)
+
+  const before = 'w = {"P": 20, "T": 40}\nx = {"P": 20, "T": 40}\ny = {"P": 20, "T": 40}\n'
+  const done = 'w = {"P": 20, "T": 30, "R": 10}\nx = {"P": 20, "T": 30, "R": 10}\ny = {"P": 20, "T": 30, "R": 10}\n'
+  const spec = {
+    file: "agent/rubric.py",
+    mustContainMin: { '"R": 10': 3 },
+    mustNotContain: ['"T": 40'],
+  }
+
+  write(before)
+  assert.equal(gradeMutation(root, spec).ok, false, "unchanged file must fail")
+
+  write('w = {"P": 20, "T": 30, "R": 10}\nx = {"P": 20, "T": 40}\ny = {"P": 20, "T": 40}\n')
+  const partial = gradeMutation(root, spec)
+  assert.equal(partial.ok, false, "editing only the first profile must fail")
+  assert.match(partial.reason, /1 time\(s\), needs at least 3/)
+
+  write(done)
+  assert.equal(gradeMutation(root, spec).ok, true)
+})
+
+test("gradeMutation fails when the task is only half done", () => {
+  const root = mkdtempSync(join(tmpdir(), "verify-mut2-"))
+  mkdirSync(join(root, "agent"), { recursive: true })
+  writeFileSync(join(root, "agent/solana.ts"), 'const A = "api.mainnet-beta.solana.com"\n')
+  const spec = { file: "agent/solana.ts", mustContain: ["devnet"], mustNotContain: ["mainnet-beta"] }
+  // Appending the new value without removing the old one is not the change asked for.
+  writeFileSync(join(root, "agent/solana.ts"), 'const A = "api.mainnet-beta.solana.com"\n// use devnet\n')
+  const r = gradeMutation(root, spec)
+  assert.equal(r.ok, false)
+  assert.match(r.reason, /still contains/)
 })
 
 test("extractRefs reads the markdown shape a model actually answers in", () => {

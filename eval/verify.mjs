@@ -159,6 +159,10 @@ export function gradeAnswer(target, text, want, { window = 1 } = {}) {
  * `mustContain` and `mustNotContain` are substrings of the final file. The
  * second list matters as much as the first: an agent that appends the new value
  * without removing the old one has not made the change it was asked for.
+ *
+ * `mustContainMin` counts occurrences instead of testing presence. A task that
+ * says "in every one of the six profiles" is not done by editing the first two,
+ * and a plain substring check would pass it happily.
  */
 export function gradeMutation(runDir, spec) {
   const abs = resolveInTarget(runDir, spec.file)
@@ -169,8 +173,13 @@ export function gradeMutation(runDir, spec) {
   } catch (e) {
     return { ok: false, reason: `${spec.file} unreadable: ${e.message}` }
   }
+  const count = (s) => body.split(s).length - 1
   for (const s of spec.mustContain ?? []) {
     if (!body.includes(s)) return { ok: false, reason: `${spec.file} does not contain ${JSON.stringify(s)}` }
+  }
+  for (const [s, n] of Object.entries(spec.mustContainMin ?? {})) {
+    const got = count(s)
+    if (got < n) return { ok: false, reason: `${spec.file} contains ${JSON.stringify(s)} ${got} time(s), needs at least ${n}` }
   }
   for (const s of spec.mustNotContain ?? []) {
     if (body.includes(s)) return { ok: false, reason: `${spec.file} still contains ${JSON.stringify(s)}` }

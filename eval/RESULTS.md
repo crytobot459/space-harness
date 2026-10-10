@@ -141,6 +141,29 @@ for its own sake: it cited `src/scaffold.ts:77` and then said the `dist/` grep
 results were not the answer, because `dist/` is compiled from `src/` and the task
 asked for the source. The trap in this subject is real and the agent saw it.
 
+### The one task that is real work
+
+Every task above is a lookup or a one-line edit. `edit-multi-profile` in
+`eval/tasks.json` is the exception and it is the closest thing here to the work
+the kit claims to help with: six stack profiles, each holding a weights
+dictionary, all six have to be edited, and an agent that stops after the first
+two fails.
+
+| | kit on | kit off |
+| --- | --- | --- |
+| correct | 2/2 | 1/2 |
+| tools | 8 and 11 | 3 and 9 |
+| narrow reads | 100% | 0% |
+
+The failing kit-off run made three tool calls, read nothing narrowly, and left
+the file untouched. **Two runs per arm is not evidence of anything**, and this is
+recorded as the first place the kit came out ahead rather than as a finding. It
+is the one result here worth spending more runs on.
+
+Subjects are built with `eval/prepare.mjs`, which pins a git ref through
+`git archive` and does not call a tree ready until it has checked that tree for
+absolute paths pointing at a real checkout.
+
 ### What this does not establish
 
 - **Eight runs per arm, and every task is a lookup or a one-line edit.** Not the
@@ -276,11 +299,23 @@ Result 2 and 3, which is another reason not to read much into them.
 
 ### What went wrong getting here
 
-Six measurement bugs survived long enough to be written down here as results.
+Seven measurement bugs survived long enough to be written down here as results.
 The pattern is the same in every case: a tool I wrote reported a number, and the
-number looked plausible. Four were in the grader, one was a sample too small to
-mean anything, and one was my own task wording. Not one was a wrong answer from
-the agent.
+number looked plausible. None of the seven was a wrong answer from an agent.
+
+**The task's premise was false and the grader believed it.** `edit-multi-profile`
+said the rubric profiles have weights that sum to 100. They have three dimensions
+and sum to 85, 80, 80, 80, 80, 75; the file's own comment on line 12 claims the
+total is 100 and the code contradicts it. Four agents added `Robustness` and
+preserved the sums exactly as instructed, and all four passed the grader. The
+check only ever asserted the substrings I had specified, so it could not notice
+that the instruction itself was wrong. This is the worst of the seven: the
+number did not merely mislead, it confirmed a wrong belief.
+
+The lesson is not "check the code", it is that a grader only tests the
+properties its author thought of. The first version of this file claimed to check
+that every profile still sums to 100 and did not. A check that cannot fail is
+worse than no check, because it is read as evidence.
 
 **The grader could not read the shape models actually answer in.** A run wrote
 `**File:** \`agent/score.py\` **Line:** 214` and quoted the line perfectly. The

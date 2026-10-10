@@ -32,9 +32,8 @@
     },
     {
       "id": "read-multi-gate",
-      "$comment": "judge.py:348 is `if total < 7`, a submit gate on a different scale from score.py's pass field. The earlier version of this suite pointed here while describing the pass field, and every arm was scored wrong.",
-      "task": "One module refuses to submit an entry and prints a message asking for a FIX before doing so. It has two such guards; report the one whose threshold is 7. Report the file, the line number and quote the comparison. Do not modify any files.",
       "$comment": "judge.py has two real submit gates: line 345 rejects total < 5 with a hard failure, line 348 rejects total < 7 asking for a FIX. An earlier wording of this task said 'the comparison that rejects a too-low total' and a kit-off run cited line 345, which is a correct answer, and was scored wrong. Naming the threshold removes the ambiguity without naming the file.",
+      "task": "One module refuses to submit an entry and prints a message asking for a FIX before doing so. It has two such guards; report the one whose threshold is 7. Report the file, the line number and quote the comparison. Do not modify any files.",
       "want": "total < 7"
     },
     {
@@ -55,6 +54,17 @@
         "mustNotContain": [
           "plan-week.md\""
         ]
+      }
+    },
+    {
+      "id": "edit-multi-profile",
+      "$comment": "The first task that is real work rather than a shortcut: six profiles, six edits, and an agent that stops after the first two is the obvious failure. mustContainMin counts occurrences, because a plain substring check passes that. An earlier version of this task said the weights sum to 100 and asked for a compensating cut. That premise was false - the profiles have three dimensions and sum to 85, 80, 80, 80, 80, 75 - so all four agents correctly preserved sums that were never 100 and the grader passed them. The comment on line 12 of that file claims the total is 100; the code disagrees with itself.",
+      "task": "In agent/rubric.py each stack profile has a weights dictionary with three dimensions. Add a fourth dimension named Robustness with weight 10 to every one of those profile dictionaries, so each profile has four dimensions. Leave the fallback dictionary at the bottom of the file alone. Make no other changes and do not reformat anything.",
+      "mutate": {
+        "file": "agent/rubric.py",
+        "mustContainMin": {
+          "Robustness": 6
+        }
       }
     }
   ]
