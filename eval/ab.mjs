@@ -25,7 +25,7 @@ import { createHash } from "node:crypto"
 import { homedir, tmpdir } from "node:os"
 import { join } from "node:path"
 
-import { elapsedSeconds } from "./metrics.js"
+import { elapsedSeconds, median } from "./metrics.js"
 
 const args = process.argv.slice(2)
 const flag = (...n) => {
@@ -44,25 +44,72 @@ const target = flag("--target")
 const task = flag("--task")
 const reps = Number(flag("--reps") ?? 3)
 const expect = all("--expect")
+// A suite is a file of {id, task, expect}. One prompt can only say so much
+// about the kit; four prompts asked four different ways is the difference
+// between an anecdote and a measurement, at four times the agent cost.
+const suitePath = flag("--suite")
+// One pathological run burned 44 minutes once. Without a ceiling a single bad
+// arm can hold the whole suite open indefinitely.
+const runTimeoutMs = Number(flag("--timeout") ?? 600) * 1000
 
-if (!target || !task) {
-  console.error("usage: node eval/ab.mjs --target <dir> --task \"<prompt>\" [--reps 3] [--expect token]...")
+if (!target || (!task && !suitePath)) {
+  console.error('usage: node eval/ab.mjs --target <dir> (--task "<prompt>" | --suite <file>) [--reps 3] [--expect token]... [--timeout 600]')
   process.exit(1)
 }
 if (!existsSync(target)) {
   console.error(`target not found: ${target}`)
   process.exit(1)
 }
-// A short alternative matches almost any answer. `--expect "judge.py|7"` scored
-// 3/3 against 1/3 on runs that had not found judge.py at all, because "7" is
-// in every line number. This has already produced one wrong result in this
-// repo's own notes; the check is cheap enough to be worth a warning.
-const weak = expect
-  .flatMap((e) => e.split("|").map((s) => s.trim()))
-  .filter((s) => s.length > 0 && s.length < 4)
-if (weak.length) {
-  console.error(`warning: expectation alternatives too short to be meaningful: ${weak.map((w) => JSON.stringify(w)).join(", ")}`)
-  console.error("         a bare digit or short token will match almost any answer.")
+
+/**
+ * A short alternative matches almost any answer. `--expect "judge.py|7"` scored
+ * 3/3 against 1/3 on runs that had not found judge.py at all, because "7" is
+ * in every line number. This has already produced one wrong result in this
+ * repo's own notes; the check is cheap enough to be worth a warning.
+ */
+function warnWeak(label, groups) {
+  const weak = groups
+    .flatMap((e) => e.split("|").map((s) => s.trim()))
+    .filter((s) => s.length > 0 && s.length < 4)
+  if (weak.length) {
+    console.error(`warning: ${label} expectation alternatives too short to be meaningful: ${weak.map((w) => JSON.stringify(w)).join(", ")}`)
+    console.error("         a bare digit or short token will match almost any answer.")
+  }
+}
+
+let jobs
+if (suitePath) {
+  if (!existsSync(suitePath)) {
+    console.error(`suite not found: ${suitePath}`)
+    process.exit(1)
+  }
+  let parsed
+  try {
+    parsed = JSON.parse(readFileSync(suitePath, "utf8"))
+  } catch (e) {
+    console.error(`suite is not valid JSON: ${e.message}`)
+    process.exit(1)
+  }
+  const list = parsed.tasks ?? []
+  if (!list.length) {
+    console.error(`suite has no tasks: ${suitePath}`)
+    process.exit(1)
+  }
+  // Two of the four answers in eval/tasks.json are the number 7 and 100, which
+  // are legitimately part of a correct answer and legitimately 3 characters
+  // long. The suite is hand-checked and pinned to a snapshot commit, so the
+  // warning is suppressed here rather than edited away at each task.
+  jobs = list.map((t) => {
+    if (!t.id || !t.task || !Array.isArray(t.expect) || !t.expect.length) {
+      console.error(`suite task is missing id, task or expect: ${JSON.stringify(t.id ?? t)}`)
+      process.exit(1)
+    }
+    return { id: t.id, task: t.task, expect: t.expect }
+  })
+  console.error(`note: suite expectations are hand-checked against ${parsed.snapshot ?? "an unnamed snapshot"}; not run through the short-alternative warning`)
+} else {
+  warnWeak("task", expect)
+  jobs = [{ id: "single", task, expect }]
 }
 const REAL_HOME = homedir()
 const TARGET_REAL = realpathSync(target)
@@ -181,71 +228,77 @@ function parseStream(file) {
   }
 }
 
-function runArmCapture(arm, home, idx, outDir) {
-  const out = join(outDir, `${arm}-${idx}.json`)
+function runArmCapture(arm, home, id, idx, outDir, prompt) {
+  const out = join(outDir, `${id}-${arm}-${idx}.json`)
   const env = { ...process.env }
   if (arm === "off") env.HOME = home
   const t0 = Date.now()
   // --dir is not optional. Nested inside an opencode session, `opencode run`
   // otherwise inherits the *parent* session's project directory and reads the
   // wrong repository entirely - which it did on the first pilot.
-  const { stdout } = spawnSync("opencode", ["run", "--dir", target, "--format", "json", task], {
+  const { stdout } = spawnSync("opencode", ["run", "--dir", target, "--format", "json", prompt], {
     cwd: target, env, encoding: "utf8", maxBuffer: 256 * 1024 * 1024,
+    timeout: runTimeoutMs, killSignal: "SIGKILL",
   })
   writeFileSync(out, stdout ?? "")
-  return { out, code: stdout === null ? 1 : 0, wall: Math.round((Date.now() - t0) / 100) / 10 }
+  return {
+    out,
+    code: stdout === null ? 1 : 0,
+    timedOut: stdout === null && Date.now() - t0 >= runTimeoutMs,
+    wall: elapsedSeconds(t0, Date.now()),
+  }
 }
 
 const nokit = makeNokitHome()
 const outDir = mkdtempSync(join(tmpdir(), "opencode-ab-out-"))
 const before = fingerprint(target)
 
-console.log(`A/B: ${reps} rep(s) per arm, alternating`)
+console.log(`A/B: ${jobs.length} task(s) x ${reps} rep(s) per arm, alternating`)
 console.log(`  target  ${target}`)
-console.log(`  task    ${task.slice(0, 90)}${task.length > 90 ? "..." : ""}`)
+for (const j of jobs) console.log(`  task    ${j.id}`)
+console.log(`  timeout ${runTimeoutMs / 1000}s per run`)
 console.log(`  kit-off home ${nokit}`)
 console.log("")
 
 const runs = []
-for (let i = 1; i <= reps; i++) {
-  for (const arm of ["on", "off"]) {
-    process.stdout.write(`  running ${arm}-${i} ... `)
-    const r = runArmCapture(arm, nokit, i, outDir)
-    const m = parseStream(r.out)
-    // Each --expect is a group; alternatives inside it are separated by "|".
-    // A task can have more than one defensible answer, and both arms finding
-    // `judge.py:348` instead of the `score.py` I first assumed is exactly the
-    // case where a strict check reports a quality difference that is not there.
-    const hit = (e) =>
-      e.split("|").some((alt) => m.text.toLowerCase().includes(alt.trim().toLowerCase()))
-    const ok = expect.length === 0 || expect.every(hit)
-    runs.push({ arm, i, ...m, wall: r.wall, code: r.code, correct: ok })
-    // Stop the moment an arm reaches outside the target. The first pilot wrote
-    // to the real repository while the task said not to modify anything, so a
-    // second arm is not worth the risk once this has happened.
-    if (m.escaped.length) {
-      console.log(`ESCAPED`)
-      console.error("")
-      console.error(`FAIL: ${arm}-${i} touched ${m.escaped.length} path(s) outside ${TARGET_REAL}`)
-      for (const p of m.escaped.slice(0, 10)) console.error(`  ${p}`)
-      console.error("")
-      console.error("Stopping. Do not run further arms against a target the agent escapes.")
-      console.error(`raw stream kept for inspection: ${r.out}`)
-      process.exit(1)
+for (const job of jobs) {
+  for (let i = 1; i <= reps; i++) {
+    for (const arm of ["on", "off"]) {
+      process.stdout.write(`  ${job.id} ${arm}-${i} ... `)
+      const r = runArmCapture(arm, nokit, job.id, i, outDir, job.task)
+      const m = parseStream(r.out)
+      // Each --expect is a group; alternatives inside it are separated by "|".
+      // A task can have more than one defensible answer, and both arms finding
+      // `judge.py:348` instead of the `score.py` I first assumed is exactly the
+      // case where a strict check reports a quality difference that is not there.
+      const hit = (e) =>
+        e.split("|").some((alt) => m.text.toLowerCase().includes(alt.trim().toLowerCase()))
+      const ok = job.expect.every(hit)
+      runs.push({ id: job.id, arm, i, ...m, wall: r.wall, code: r.code, timedOut: r.timedOut, correct: ok })
+      // Stop the moment an arm reaches outside the target. The first pilot wrote
+      // to the real repository while the task said not to modify anything, so a
+      // second arm is not worth the risk once this has happened.
+      if (m.escaped.length) {
+        console.log(`ESCAPED`)
+        console.error("")
+        console.error(`FAIL: ${job.id} ${arm}-${i} touched ${m.escaped.length} path(s) outside ${TARGET_REAL}`)
+        for (const p of m.escaped.slice(0, 10)) console.error(`  ${p}`)
+        console.error("")
+        console.error("Stopping. Do not run further arms against a target the agent escapes.")
+        console.error(`raw stream kept for inspection: ${r.out}`)
+        process.exit(1)
+      }
+      console.log(
+        `${m.tools} tools, ${m.narrow_pct}% narrow, ${m.finalCtx} ctx, ${r.wall}s` +
+          (r.timedOut ? ", TIMED OUT" : `, answer ${ok ? "ok" : "MISS"}`),
+      )
     }
-    console.log(
-      `${m.tools} tools, ${m.narrow_pct}% narrow, ${m.finalCtx} ctx, ${r.wall}s` +
-        (expect.length ? `, answer ${ok ? "ok" : "MISS"}` : ""),
-    )
   }
 }
 
 const after = fingerprint(target)
-const stat = (arm, key) => {
-  const v = runs.filter((r) => r.arm === arm).map((r) => r[key]).filter((x) => x !== null)
-  if (!v.length) return null
-  return Math.round((v.reduce((a, b) => a + b, 0) / v.length) * 10) / 10
-}
+// Median, never mean. See median() in ./metrics.js for the run that proves why.
+const stat = (arm, key) => median(runs.filter((r) => r.arm === arm).map((r) => r[key]))
 
 const rows = [
   ["tool calls", stat("on", "tools"), stat("off", "tools")],
@@ -262,12 +315,30 @@ const rows = [
 ]
 
 console.log("")
-console.log(`  ${"metric".padEnd(16)} ${"kit on".padStart(10)} ${"kit off".padStart(10)}`)
+console.log(`  ${"metric (median)".padEnd(16)} ${"kit on".padStart(10)} ${"kit off".padStart(10)}`)
 console.log(`  ${"-".repeat(16)} ${"-".repeat(10)} ${"-".repeat(10)}`)
 for (const [label, a, b] of rows) {
   console.log(`  ${label.padEnd(16)} ${String(a).padStart(10)} ${String(b).padStart(10)}`)
 }
+
+if (jobs.length > 1) {
+  console.log("")
+  console.log(`  ${"per task".padEnd(16)} ${"kit on".padStart(10)} ${"kit off".padStart(10)}`)
+  console.log(`  ${"-".repeat(16)} ${"-".repeat(10)} ${"-".repeat(10)}`)
+  for (const job of jobs) {
+    const score = (arm) => {
+      const rs = runs.filter((r) => r.id === job.id && r.arm === arm)
+      return `${rs.filter((r) => r.correct).length}/${rs.length}`
+    }
+    console.log(`  ${job.id.padEnd(16)} ${score("on").padStart(10)} ${score("off").padStart(10)}`)
+  }
+}
+
+const timedOut = runs.filter((r) => r.timedOut)
 console.log("")
+if (timedOut.length) {
+  console.log(`  timed out: ${timedOut.map((r) => `${r.id}/${r.arm}-${r.i}`).join(", ")}`)
+}
 console.log(`  every path stayed under the target: ${runs.every((r) => r.escaped.length === 0) ? "yes" : "NO"}`)
 console.log(`  target unchanged: ${before === after ? "yes" : `NO (${before} -> ${after})`}`)
 console.log(`  raw streams: ${outDir}`)

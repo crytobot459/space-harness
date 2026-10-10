@@ -126,59 +126,82 @@ say anything about cause.
 
 ## The A/B
 
-    node eval/ab.mjs --target <dir> --task "<prompt>" --reps 3 --expect judge.py
+    node eval/ab.mjs --target <dir> --suite eval/tasks.json --reps 2
 
-**Six agent runs, one task, one repository. Read the table, not the headline.**
-Neither column is a verdict. The wall-clock gap is carried by a single kit-off
-run, and the correctness gap is two runs out of six. Anyone quoting a ratio out
-of this section is quoting a sample of six.
+**This section replaced an earlier version of itself that reported the opposite
+of what it now says.** The first version ran a single task three times per arm
+and read 2/3 against 1/3 in favour of the kit. Widening to four tasks and
+sixteen runs removed that gap entirely. The single-task result was noise, and it
+should not have been written up as a finding in the first place.
 
-Three reps per arm, alternating so drift in the model route lands on both sides.
-Kit-off is a throwaway `HOME` with no `~/.config/opencode`, so the instruction
-file, the agent definitions and the plugins are all absent; `OPENCODE_CONFIG`
-and `--pure` do **not** achieve this, both still load `GLOBAL.md`. The subject
-is a `git archive` snapshot of another repository, so both arms read identical
-bytes.
+Eight reps per arm across four tasks, alternating so drift in the model route
+lands on both sides. Kit-off is a throwaway `HOME` with no `~/.config/opencode`,
+so the instruction file, the agent definitions and the plugins are all absent;
+`OPENCODE_CONFIG` and `--pure` do **not** achieve this, both still load
+`GLOBAL.md`. The subject is a `git archive` snapshot of `lablab-harness` at
+`8a674f5`, so both arms read identical bytes. Each task asks a different shape:
+a boolean field, a numeric constant, an inverse lookup, a path literal.
 
-Task: find the file, line and threshold that decide whether a submission passes.
-The answer is `agent/judge.py:348`, `total >= 7`.
-
-| Metric (median of 3) | kit on | kit off |
+| Metric (median of 8) | kit on | kit off |
 | --- | --- | --- |
-| wall seconds | 14.7 | 42.4 |
-| tool calls | 7 | 3 |
-| grep/glob | 3 | 1 |
-| read calls | 2 | 1 |
-| final context | 15,943 | 13,169 |
-| answers naming `judge.py` | 2 / 3 | 1 / 3 |
+| wall seconds | **18.4** | 32.7 |
+| tool calls | 5.5 | 4.5 |
+| grep/glob | 2 | 2.5 |
+| narrow reads | 100% | 50% |
+| final context | **14,039** | 15,574 |
+| correct | 7 / 8 | **8 / 8** |
 | paths outside target | 0 | 0 |
 
-Per run, kit off took 262.7s, 42.4s and 7.3s; kit on took 15.5s, 14.7s and
-8.5s. Medians, not means: the single 262.7s run drags the kit-off mean to
-104.1s, which would make the kit look 8x slower than the medians show.
+| per task | kit on | kit off |
+| --- | --- | --- |
+| pass-field | 2/2 | 2/2 |
+| total-weight | 2/2 | 2/2 |
+| inverse-lookup | 1/2 | 2/2 |
+| skills-path | 2/2 | 2/2 |
 
-Most of both columns is carried by that one kit-off run, which made three bash
-calls, zero searches, zero reads in 4.4 minutes and returned the wrong file.
-Strip it out and the remaining two kit-off runs bracket the kit-on runs. Treat
-the table as one good result and one bad one, not as a ratio.
+**The kit is faster and no more accurate.** 18.4s against 32.7s, 1.8x. It ends
+with about 10% less context and reads narrowly every time, against half the time
+for the bare agent. It did not answer better: 7/8 against 8/8, and the single
+kit miss is a scoring artifact rather than a wrong answer - it reported
+`stack: bob` and `weight: 25` correctly but called the file "the rubric" instead
+of writing `rubric.py`, and the checker required that literal. Scored on
+substance it is 8/8 against 8/8.
 
 ### What this does not establish
 
-- **n=3, one task, one repository.** The whole finding rests on six agent runs.
-  A different task could invert it, and nothing here says it will not.
+- **n=8 per arm, four tasks, one repository, one language.** Sixteen agent runs.
+  The speed gap is consistent across every task; the correctness result is a tie
+  on sixteen runs, which is not the same as proving there is no difference.
 - **The subject is a Python repo, not TypeScript.** The kit's own tests and
   effects are elsewhere.
-- **Correctness is scored by substring match.** A file name is a strong enough
-  token; see "What went wrong getting here" for the loose version of this check
-  and the number it produced.
+- **All four tasks are single-file lookups.** The kit is built around finding
+  things, so this suits it. Nothing here measures long multi-step refactors,
+  where a stricter reading habit might cost more than it saves.
+- **Correctness is substring matching, and that has now produced three wrong
+  numbers in this file** - once too loose (`3/3` on a bare digit), once pointed
+  at the wrong file, and once marking a substantively correct answer wrong
+  because it said "the rubric" rather than `rubric.py`. Every task answer here
+  has been read by hand against the snapshot.
 - **Wall clock is not controlled for load.** Arms alternate, which helps, but
-  six runs share one model route.
+  sixteen runs share one model route.
 
 ### What went wrong getting here
 
-Two measurement bugs survived long enough to be written down here as results.
-Both are recorded because the pattern is the same: a tool I wrote reported a
-number, and the number looked plausible.
+Four measurement bugs survived long enough to be written down here as results.
+The pattern is the same in every case: a tool I wrote reported a number, and the
+number looked plausible.
+
+**The single-task result did not replicate.** This section originally claimed
+the kit answered better, 2/3 against 1/3. Four tasks and three times the runs
+showed 7/8 against 8/8. That claim was noise presented as a finding, and no
+amount of arithmetic would have caught it - only a different sample.
+
+**The task was ambiguous and the checker silently believed the wrong answer.**
+The first version asked for "the threshold the total score must reach for pass
+to be true". There are two: `agent/score.py:214` assigns `"pass": total >= 55`,
+and `agent/judge.py:348` is `if total < 7`, a submit gate on a different scale.
+Every arm answered `score.py` and was scored wrong. The task now names the
+boolean field explicitly.
 
 **Durations were ten times too large.** OpenCode event timestamps are in
 milliseconds; `ab.mjs` divided by 100. A 4.4 minute run was reported as 44
@@ -191,8 +214,7 @@ checking an absolute number against a wall clock catches a constant factor.
 independently found `judge.py:348`, so `--expect` learned to accept
 alternatives separated by `|`. Written as `--expect "judge.py|7"` it accepted any
 answer containing the digit 7, which is any line number, and reported 3/3
-against 1/3 on answers that had not found the file at all. The table above
-scores strictly on `judge.py` and reads 2/3 against 1/3.
+against 1/3 on answers that had not found the file at all.
 
 The first pilot produced no usable number either, for a reason worth recording.
 Nested inside a running opencode session, `opencode run` inherits the *parent*
@@ -206,7 +228,10 @@ Two fixes came out of that. `ab.mjs` now passes `--dir` explicitly, and it stops
 the whole experiment the moment any arm names a path outside the target. That
 detector is not theoretical: replaying the original streams through it reports
 3 escaped paths for the kit-on arm and 15 for the kit-off arm, matching a manual
-count. The three reps above all report 0.
+count. All sixteen runs above report 0.
+
+Per-run timeout is in as well, since one kit-off run once took 4.4 minutes with
+nothing to show for it and nothing was stopping it.
 
 ## The gate
 

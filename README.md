@@ -313,6 +313,14 @@ npm run attribute    # where the context went: fixed overhead vs history
 npm run baseline     # your own install, from scratch
 ```
 
+`eval/ab.mjs` runs the same task with and without the kit, to separate the kit
+from the work. It spawns real agents, so it is not part of `npm run check`:
+
+```bash
+node eval/ab.mjs --target <dir> --suite eval/tasks.json --reps 2
+node eval/ab.mjs --target <dir> --task "<prompt>" --expect <token>
+```
+
 `npm test` and `npm run typecheck` need nothing but the repo, so CI runs those.
 The rest read `~/.local/share/opencode/opencode.db` and `~/.config/opencode`,
 which only exist on a machine that has run OpenCode with the kit installed -

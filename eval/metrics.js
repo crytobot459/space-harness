@@ -44,6 +44,22 @@ export function elapsedSeconds(fromMs, toMs) {
 }
 
 /**
+ * Median of a list, rounded to one decimal.
+ *
+ * Not an average. One kit-off run took 262.7s against 42.4s and 7.3s, and a mean
+ * over three turns that into an 8x slowdown that never happened. Outliers are
+ * the normal case for agent wall time, so every reported figure is a median.
+ * Null rather than NaN for an empty list.
+ */
+export function median(values) {
+  const v = values.filter((x) => Number.isFinite(x)).sort((a, b) => a - b)
+  if (!v.length) return null
+  const mid = Math.floor(v.length / 2)
+  const m = v.length % 2 ? v[mid] : (v[mid - 1] + v[mid]) / 2
+  return Math.round(m * 10) / 10
+}
+
+/**
  * Whether the kit pays for itself: the fixed overhead it adds to every request
  * versus the history it removes per session. Positive means it costs more.
  *

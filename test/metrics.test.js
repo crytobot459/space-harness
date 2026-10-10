@@ -6,7 +6,7 @@
 import { test } from "node:test"
 import assert from "node:assert/strict"
 
-import { pct, readsPerSearch, ctxDropPct, historyPerTurn, payback, elapsedSeconds } from "../eval/metrics.js"
+import { pct, readsPerSearch, ctxDropPct, historyPerTurn, payback, elapsedSeconds, median } from "../eval/metrics.js"
 
 test("pct reports the share of narrow reads", () => {
   assert.equal(pct(181, 277), 65.3)
@@ -72,4 +72,22 @@ test("elapsedSeconds converts opencode millisecond timestamps", () => {
 test("elapsedSeconds refuses to invent a duration from bad input", () => {
   assert.equal(elapsedSeconds(null, 1000), null)
   assert.equal(elapsedSeconds(0, undefined), null)
+})
+
+test("median ignores the outlier an average would be dragged into", () => {
+  // The measured kit-off wall times. A mean reads 104.1s and an 8x slowdown
+  // that never happened; the median is the real figure.
+  assert.equal(median([262.7, 42.4, 7.3]), 42.4)
+  assert.equal(median([15.5, 14.7, 8.5]), 14.7)
+})
+
+test("median averages the middle pair on an even count", () => {
+  assert.equal(median([1, 2, 3, 4]), 2.5)
+  assert.equal(median([262.7, 42.4, 7.3, 9.1]), 25.8)
+})
+
+test("median skips non-numeric entries and refuses an empty list", () => {
+  assert.equal(median([1, null, 3, undefined, 5]), 3)
+  assert.equal(median([]), null)
+  assert.equal(median([null, undefined]), null)
 })

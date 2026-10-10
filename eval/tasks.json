@@ -1,0 +1,41 @@
+{
+  "$comment": [
+    "Verification tasks for eval/ab.mjs --suite.",
+    "Written against a `git archive` snapshot of lablab-harness at 8a674f5,",
+    "333 tracked files, 12 MB. Every answer below was confirmed by grep before",
+    "the suite was written, and each task asks in a different shape: a numeric",
+    "constant, a semantic lookup, an inverse lookup, and a path literal.",
+    "",
+    "`expect` is a list of groups. A run is correct when its final answer",
+    "contains a token from every group. Inside a group, `|` separates",
+    "alternatives that are equally acceptable. Never put a bare digit in an",
+    "alternative - it matches every line number."
+  ],
+  "snapshot": "lablab-harness@8a674f5",
+  "tasks": [
+    {
+      "id": "pass-field",
+      "task": "In this repository one module builds a result object containing a boolean field named pass. Report the exact file path and line number where that field is assigned, and quote the line. Do not modify any files.",
+      "$comment": [
+        "An earlier version of this task asked for 'the threshold the total score must reach for pass to be true' without naming the field. That is ambiguous: agent/score.py:214 assigns \"pass\": total >= 55, while agent/judge.py:348 is `if total < 7`, a submit gate on a different scale. Every arm answered score.py and was scored wrong.",
+        "expect is the file only. The number 55 appears in free text far too readily to verify safely, and a bare digit is exactly the kind of token that made an earlier checker pass everything."
+      ],
+      "expect": ["score.py"]
+    },
+    {
+      "id": "total-weight",
+      "task": "In this repository the rubric assigns weights to scoring dimensions. What total must those weights sum to? Report the file, the line and the number. Do not modify any files.",
+      "expect": ["rubric.py", "100"]
+    },
+    {
+      "id": "inverse-lookup",
+      "task": "In this repository one sponsor stack overrides the rubric weights so that the Originality dimension is worth 25. Which stack is it? Report the file, the line and the stack name. Do not modify any files.",
+      "expect": ["rubric.py", "bob"]
+    },
+    {
+      "id": "skills-path",
+      "task": "In this repository one module reads its playbooks from the user's OpenCode skills directory rather than from the repository. Report that module's file path and the exact skills directory path it constructs. Do not modify any files.",
+      "expect": ["research.py", "skills"]
+    }
+  ]
+}
