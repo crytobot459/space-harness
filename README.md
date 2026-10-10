@@ -310,15 +310,18 @@ npm run typecheck
 npm run eval         # synthetic: pruning, prompt pressure, effort projection
 npm run measure      # is this install behaving? narrow reads, context
 npm run attribute    # where the context went: fixed overhead vs history
+npm run thresholds   # propose the gate floor from what this install actually did
 npm run baseline     # your own install, from scratch
 ```
 
-`eval/ab.mjs` runs the same task with and without the kit, to separate the kit
-from the work. It spawns real agents, so it is not part of `npm run check`:
+`eval/ab.mjs` runs the same tasks with and without the kit, to separate the kit
+from the work. It spawns real agents, so it is not part of `npm run check`, and
+it wants a subject it can hand each run a private copy of:
 
 ```bash
-node eval/ab.mjs --target <dir> --suite eval/tasks.json --reps 2
-node eval/ab.mjs --target <dir> --task "<prompt>" --expect <token>
+node eval/prepare.mjs --repo ~/work/lablab-harness --ref 8a674f5
+node eval/ab.mjs --target <printed path> --suite eval/tasks.json --reps 2 --sanitize
+node eval/ab.mjs --rescore <saved stream dir>   # re-grade without spawning agents
 ```
 
 `npm test` and `npm run typecheck` need nothing but the repo, so CI runs those.

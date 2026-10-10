@@ -47,6 +47,7 @@
     "measure:check": "node eval/measure-install.mjs --min-narrow 45 --min-ctx-drop 20",
     "attribute": "node eval/attribute.mjs",
     "attribute:json": "node eval/attribute.mjs --json",
+    "thresholds": "node eval/thresholds.mjs",
     "prepublishOnly": "npm run build"
   },
   "keywords": [
