@@ -6,6 +6,7 @@ Regenerate with:
     npm run measure            # human-readable table
     npm run measure -- --json  # machine-readable
     npm run measure:check      # same, but exits 1 if the kit regresses
+    npm run attribute          # where the context actually went
 
 The source is the install database, opened read-only. Nothing here is estimated
 and nothing is estimated from a synthetic transcript: `eval/run.mjs` covers the
@@ -66,6 +67,42 @@ This reproduces the `2,966 reads / 249 searches / 11.9` baseline published in
 `README.md` exactly, which is the check that the measurement is reading the same
 things the earlier one did. The before-window here starts at the beginning of
 the database, so it is wider than the default and the before-numbers differ.
+
+## Result 3 - why the context fell, decomposed
+
+    npm run attribute
+
+Result 2 shows context per request down 45%. It does not say which part of the
+context moved. There are two, and they behave independently:
+
+- **fixed overhead** - the system prompt and tool definitions, resent on every
+  request. Paid on turn one, before any work happens.
+- **history** - what the conversation has accumulated since: tool output, files
+  read, the agent's own earlier messages.
+
+Per session:
+
+| | before | after | delta |
+| --- | --- | --- | --- |
+| sessions | 154 | 48 | |
+| turns per session | 79.1 | 35.2 | |
+| fixed overhead | 8,236 | 8,705 | **+469** |
+| context at end | 68,648 | 18,285 | |
+| history | 60,412 | 9,580 | **-50,832** |
+| history per turn | 763.4 | 272.4 | **-491** |
+
+The kit's own cost is visible and it is positive: **+469 tokens on every single
+request**, which is `GLOBAL.md` plus the agent definitions plus the plugin
+prompts. Nothing about the kit made the system prompt shorter.
+
+Everything it bought is in the other column. History per session fell by 84%, and
+per turn by 64%. The per-turn column is the one that matters, because sessions
+also got shorter - 79 turns to 35 - and shorter sessions accumulate less history
+for free. Normalising for turns, the kit is still responsible for a 64% drop.
+
+That is the mechanism the whole kit rests on, and it is the one thing the
+correlation in Results 1 and 2 could not show. The kit does not shrink what it
+costs; it shrinks what the agent drags along behind it.
 
 ## What these numbers do not prove
 
@@ -172,8 +209,11 @@ small - only the floor is enforced.
 ## Not measured here
 
 - Whether the agent's *answers* got better in general. One task, six runs.
-- Whether the numbers in Results 1 and 2 were caused by the kit. The A/B points
-  the same way, on a different task; the windows still do not.
+- Whether the numbers in Results 1 and 2 were caused by the kit. Result 3 shows
+  a mechanism that would produce them; the A/B points the same way on a
+  different task. Neither window separates the kit from the work.
+- Which part of the kit does the work. Result 3 localises the effect to history
+  accumulation, not to any individual rule or plugin.
 - Pruner bytes saved. `eval/run.mjs` reports it; `.space/prune.jsonl` records it.
 - Whether the free model route is healthy. `oc-harness doctor` answers that and
-  needs the network, so it is deliberately outside this script.
+  needs the network, so it is deliberately outside these scripts.

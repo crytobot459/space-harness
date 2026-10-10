@@ -22,3 +22,20 @@ export function ctxDropPct(before, after) {
   if (!before) return null
   return Math.round((1 - after / before) * 1000) / 10
 }
+
+/** Tokens of accumulated history per assistant turn. Null with no turns to divide by. */
+export function historyPerTurn(history, turns) {
+  if (!turns) return null
+  return Math.round((history / turns) * 10) / 10
+}
+
+/**
+ * Whether the kit pays for itself: the fixed overhead it adds to every request
+ * versus the history it removes per session. Positive means it costs more.
+ *
+ * Pinned because the whole conclusion in eval/RESULTS.md rests on the sign, and
+ * turning `< 0` into `<= 0` would flip the verdict without any visible change.
+ */
+export function payback(fixedDelta, historyDelta) {
+  return fixedDelta + historyDelta < 0
+}

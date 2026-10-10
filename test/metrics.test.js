@@ -6,7 +6,7 @@
 import { test } from "node:test"
 import assert from "node:assert/strict"
 
-import { pct, readsPerSearch, ctxDropPct } from "../eval/metrics.js"
+import { pct, readsPerSearch, ctxDropPct, historyPerTurn, payback } from "../eval/metrics.js"
 
 test("pct reports the share of narrow reads", () => {
   assert.equal(pct(181, 277), 65.3)
@@ -41,4 +41,22 @@ test("ctxDropPct measures the reduction, and is null without a baseline", () => 
 test("ctxDropPct goes negative when context grew", () => {
   // A regression must show as a number the gate can reject, not as silence.
   assert.equal(ctxDropPct(1000, 1500), -50)
+})
+
+test("historyPerTurn divides accumulated history by turns", () => {
+  assert.equal(historyPerTurn(60412, 79.1), 763.7)
+  assert.equal(historyPerTurn(9580, 35), 273.7)
+})
+
+test("historyPerTurn returns null when a session had no turns", () => {
+  assert.equal(historyPerTurn(5000, 0), null)
+})
+
+test("payback is decided by the sign of the two deltas together", () => {
+  // The measured case: +469 per request, -50832 per session.
+  assert.equal(payback(469, -50832), true)
+  // A kit that adds cost and takes nothing back does not pay.
+  assert.equal(payback(469, -100), false)
+  // A kit that adds nothing and removes history still pays.
+  assert.equal(payback(0, -1), true)
 })
