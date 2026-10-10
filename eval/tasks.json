@@ -1,41 +1,61 @@
 {
   "$comment": [
     "Verification tasks for eval/ab.mjs --suite.",
-    "Written against a `git archive` snapshot of lablab-harness at 8a674f5,",
-    "333 tracked files, 12 MB. Every answer below was confirmed by grep before",
-    "the suite was written, and each task asks in a different shape: a numeric",
-    "constant, a semantic lookup, an inverse lookup, and a path literal.",
+    "Written against a `git archive` snapshot of lablab-harness at 8a674f5.",
     "",
-    "`expect` is a list of groups. A run is correct when its final answer",
-    "contains a token from every group. Inside a group, `|` separates",
-    "alternatives that are equally acceptable. Never put a bare digit in an",
-    "alternative - it matches every line number."
+    "Grading is by citation, not by prose: each read task names `want`, a",
+    "substring of one real source line, and eval/verify.mjs resolves the path:line",
+    "the agent cited and reads that line out of the snapshot. An answer can only",
+    "pass by pointing at the code.",
+    "",
+    "The single-file lookups came first and are kept, because they are the",
+    "control. The multi-step ones are the point: this repository defines OUT in",
+    "6 modules and BASE in 19, so answering them means enumerating candidates and",
+    "then choosing, not hitting the right file first try.",
+    "",
+    "Every want below was read out of the snapshot with sed before it was written",
+    "here. Re-check with: git archive | tar -x && grep -n"
   ],
   "snapshot": "lablab-harness@8a674f5",
   "tasks": [
     {
-      "id": "pass-field",
+      "id": "read-control",
+      "$comment": "Control. One module, one constant.",
       "task": "In this repository one module builds a result object containing a boolean field named pass. Report the exact file path and line number where that field is assigned, and quote the line. Do not modify any files.",
-      "$comment": [
-        "An earlier version of this task asked for 'the threshold the total score must reach for pass to be true' without naming the field. That is ambiguous: agent/score.py:214 assigns \"pass\": total >= 55, while agent/judge.py:348 is `if total < 7`, a submit gate on a different scale. Every arm answered score.py and was scored wrong.",
-        "expect is the file only. The number 55 appears in free text far too readily to verify safely, and a bare digit is exactly the kind of token that made an earlier checker pass everything."
-      ],
-      "expect": ["score.py"]
+      "want": "\"pass\": total >= 55"
     },
     {
-      "id": "total-weight",
-      "task": "In this repository the rubric assigns weights to scoring dimensions. What total must those weights sum to? Report the file, the line and the number. Do not modify any files.",
-      "expect": ["rubric.py", "100"]
+      "id": "read-multi-out",
+      "$comment": "Six modules define OUT at module level. The agent has to see all six to pick the one whose value is the weekly plan.",
+      "task": "Six modules in agent/ each define a module-level constant OUT pointing at a different output file. Which one of them points at work/plan-week.md? Report the file and the line. Do not modify any files.",
+      "want": "plan-week.md"
     },
     {
-      "id": "inverse-lookup",
-      "task": "In this repository one sponsor stack overrides the rubric weights so that the Originality dimension is worth 25. Which stack is it? Report the file, the line and the stack name. Do not modify any files.",
-      "expect": ["rubric.py", "bob"]
+      "id": "read-multi-gate",
+      "$comment": "judge.py:348 is `if total < 7`, a submit gate on a different scale from score.py's pass field. The earlier version of this suite pointed here while describing the pass field, and every arm was scored wrong.",
+      "task": "One module refuses to submit an entry and prints a message asking for a FIX before doing so. It has two such guards; report the one whose threshold is 7. Report the file, the line number and quote the comparison. Do not modify any files.",
+      "$comment": "judge.py has two real submit gates: line 345 rejects total < 5 with a hard failure, line 348 rejects total < 7 asking for a FIX. An earlier wording of this task said 'the comparison that rejects a too-low total' and a kit-off run cited line 345, which is a correct answer, and was scored wrong. Naming the threshold removes the ambiguity without naming the file.",
+      "want": "total < 7"
     },
     {
-      "id": "skills-path",
-      "task": "In this repository one module reads its playbooks from the user's OpenCode skills directory rather than from the repository. Report that module's file path and the exact skills directory path it constructs. Do not modify any files.",
-      "expect": ["research.py", "skills"]
+      "id": "read-multi-skills",
+      "$comment": "Needs two different files: research.py:20 for the output, research.py:21 for the skills path. want matches the second line.",
+      "task": "One module writes its findings to work/winners.md and reads its playbooks from the user's OpenCode skills directory rather than from the repository. Report both line numbers in that module, and quote the line that builds the skills path. Do not modify any files.",
+      "want": "\"opencode\" / \"skills\""
+    },
+    {
+      "id": "edit-rename-output",
+      "$comment": "The first task that needs the kit to do work rather than to shortcut it. Graded on the file after the run, not on what the agent says it did. mustNotContain is as important as mustContain: appending the new path without removing the old one is not the change that was asked for.",
+      "task": "In agent/portfolio.py the weekly plan is written to work/plan-week.md. Change it so it is written to work/plan-week-v2.md instead. Make no other changes and do not reformat anything.",
+      "mutate": {
+        "file": "agent/portfolio.py",
+        "mustContain": [
+          "plan-week-v2.md"
+        ],
+        "mustNotContain": [
+          "plan-week.md\""
+        ]
+      }
     }
   ]
 }

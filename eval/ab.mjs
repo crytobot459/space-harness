@@ -18,14 +18,19 @@
 // The live ~/.config/opencode is never touched.
 //
 // Arms alternate so any drift in the model route lands on both sides equally.
+//
+// --rescore <streamdir> re-grades a previous run's saved streams without
+// spawning a single agent. The grader has been wrong five times in this repo and
+// every fix so far would otherwise have cost another twenty runs.
 
 import { spawnSync } from "node:child_process"
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, statSync, symlinkSync, writeFileSync } from "node:fs"
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync, cpSync } from "node:fs"
 import { createHash } from "node:crypto"
 import { homedir, tmpdir } from "node:os"
 import { join } from "node:path"
 
 import { elapsedSeconds, median } from "./metrics.js"
+import { gradeAnswer, gradeMutation } from "./verify.mjs"
 
 const args = process.argv.slice(2)
 const flag = (...n) => {
@@ -48,7 +53,11 @@ const expect = all("--expect")
 // about the kit; four prompts asked four different ways is the difference
 // between an anecdote and a measurement, at four times the agent cost.
 const suitePath = flag("--suite")
-// One pathological run burned 44 minutes once. Without a ceiling a single bad
+// Re-grade a previous run's saved streams without spawning agents. The grader
+// has been wrong five times in this repo and every fix would otherwise have
+// cost another twenty runs.
+const rescoreDir = flag("--rescore")
+// One pathological run burned 4.4 minutes once. Without a ceiling a single bad
 // arm can hold the whole suite open indefinitely.
 const runTimeoutMs = Number(flag("--timeout") ?? 600) * 1000
 
@@ -95,18 +104,30 @@ if (suitePath) {
     console.error(`suite has no tasks: ${suitePath}`)
     process.exit(1)
   }
-  // Two of the four answers in eval/tasks.json are the number 7 and 100, which
-  // are legitimately part of a correct answer and legitimately 3 characters
-  // long. The suite is hand-checked and pinned to a snapshot commit, so the
-  // warning is suppressed here rather than edited away at each task.
+  // Every read task names the answer as a substring of one real source line,
+  // and verify.mjs resolves the agent's citation against the snapshot to find
+  // it. Nothing is matched against prose, so no task can be passed by saying a
+  // number, and none can be failed by not repeating a filename the agent had
+  // every reason to abbreviate.
   jobs = list.map((t) => {
-    if (!t.id || !t.task || !Array.isArray(t.expect) || !t.expect.length) {
-      console.error(`suite task is missing id, task or expect: ${JSON.stringify(t.id ?? t)}`)
+    if (!t.id || !t.task) {
+      console.error(`suite task is missing id or task: ${JSON.stringify(t.id ?? t)}`)
       process.exit(1)
     }
-    return { id: t.id, task: t.task, expect: t.expect }
+    if (t.mutate) {
+      if (!t.mutate.file) {
+        console.error(`suite mutate task is missing mutate.file: ${t.id}`)
+        process.exit(1)
+      }
+      return { id: t.id, task: t.task, mutate: t.mutate }
+    }
+    if (typeof t.want !== "string" || !t.want.length) {
+      console.error(`suite read task is missing want: ${JSON.stringify(t.id)}`)
+      process.exit(1)
+    }
+    return { id: t.id, task: t.task, want: t.want }
   })
-  console.error(`note: suite expectations are hand-checked against ${parsed.snapshot ?? "an unnamed snapshot"}; not run through the short-alternative warning`)
+  console.error(`note: graded against ${parsed.snapshot ?? "an unnamed snapshot"} by resolving citations, not by matching prose`)
 } else {
   warnWeak("task", expect)
   jobs = [{ id: "single", task, expect }]
@@ -115,17 +136,18 @@ const REAL_HOME = homedir()
 const TARGET_REAL = realpathSync(target)
 
 /**
- * True when `p` is the target or something under it. Symlinks are resolved on
- * both sides so `/tmp` -> `/private/tmp` does not read as an escape.
+ * True when `p` is `root` or something under it. Symlinks are resolved on both
+ * sides so `/tmp` -> `/private/tmp` does not read as an escape, and so does an
+ * agent that echoes the fully resolved `/private` form.
  *
  * Relative paths count as inside: the agent resolves them against its working
- * directory, which is the target. A path is only "escaped" when it names a
+ * directory, which is the run copy. A path is only "escaped" when it names a
  * location outside, which is the case worth stopping for.
  */
-function isInsideTarget(p) {
+function isInsideTarget(p, root = TARGET_REAL) {
   if (!p || typeof p !== "string") return true
-  const abs = p.startsWith("/") ? realpathSafe(p) : join(TARGET_REAL, p)
-  return abs === TARGET_REAL || abs.startsWith(TARGET_REAL + "/")
+  const abs = p.startsWith("/") ? realpathSafe(p) : join(root, p)
+  return abs === root || abs.startsWith(root + "/")
 }
 
 function realpathSafe(p) {
@@ -136,6 +158,111 @@ function realpathSafe(p) {
     // a write the agent only planned still counts.
     return p
   }
+}
+
+/**
+ * Absolute paths baked into the subject that point somewhere real and outside
+ * it. A `git archive` snapshot keeps them: five files in the suite subject
+ * contain `/Users/<name>/lablab-harness/...`, an agent read one, followed it,
+ * and left the sandbox to read the actual checkout. Read-only, but that was
+ * luck rather than design.
+ *
+ * Only paths that both look absolute *and* resolve to something on disk are
+ * reported, so a stray "/home/ubuntu" in a fixture is not noise.
+ */
+function findLeakedPaths(dir, depth = 0) {
+  if (depth > 6) return []
+  const found = []
+  const entries = []
+  try {
+    entries.push(...readdirSync(dir, { withFileTypes: true }))
+  } catch {
+    return []
+  }
+  for (const e of entries) {
+    if (e.name === ".git" || e.name === ".space" || e.name === "node_modules") continue
+    const p = join(dir, e.name)
+    if (e.isDirectory()) {
+      found.push(...findLeakedPaths(p, depth + 1))
+      continue
+    }
+    if (!/\.(md|py|ts|tsx|js|json|txt|ya?ml|toml|sh)$/.test(e.name)) continue
+    let body
+    try {
+      body = readFileSync(p, "utf8")
+    } catch {
+      continue
+    }
+    for (const m of body.matchAll(/\/(?:Users|home)\/[A-Za-z0-9._-]+(?:\/[A-Za-z0-9._-]+)*/g)) {
+      const abs = m[0].replace(/[.,;:)]+$/, "")
+      if (!existsSync(abs)) continue
+      if (abs === dir || abs.startsWith(dir + "/")) continue
+      found.push({ file: p.slice(dir.length + 1), path: abs })
+    }
+  }
+  // One entry per distinct path; the file it came from is only for the message.
+  const seen = new Set()
+  return found.filter((f) => (seen.has(f.path) ? false : seen.add(f.path)))
+}
+
+const leaks = findLeakedPaths(target)
+const sanitize = args.includes("--sanitize")
+if (rescoreDir && !existsSync(rescoreDir)) {
+  console.error(`rescore directory not found: ${rescoreDir}`)
+  process.exit(1)
+}
+// Rescore spawns nothing, so it cannot walk out of anything.
+if (leaks.length && !sanitize && !rescoreDir && !args.includes("--allow-leaks")) {
+  console.error(`FAIL: the subject contains ${leaks.length} absolute path(s) that resolve outside it.`)
+  console.error("An agent can follow one and leave the sandbox, which happened for real:")
+  console.error("a kit-on run read the actual lablab-harness checkout before this check existed.")
+  console.error("")
+  for (const l of leaks.slice(0, 10)) console.error(`  ${l.path}`)
+  console.error(`    first seen in ${leaks[0].file}`)
+  console.error("")
+  console.error("Rerun with --sanitize to scrub each run copy, or --allow-leaks to accept the risk.")
+  process.exit(1)
+}
+
+/**
+ * Rewrite leaked absolute paths in a run copy so following one leads nowhere.
+ * Only files the leak scan already looked at are touched, so a binary or a
+ * vendored blob is never rewritten by accident.
+ */
+function sanitizeCopy(dir) {
+  let n = 0
+  const walk = (d, depth = 0) => {
+    if (depth > 6) return
+    let entries = []
+    try {
+      entries = readdirSync(d, { withFileTypes: true })
+    } catch {
+      return
+    }
+    for (const e of entries) {
+      if (e.name === ".git" || e.name === ".space" || e.name === "node_modules") continue
+      const p = join(d, e.name)
+      if (e.isDirectory()) {
+        walk(p, depth + 1)
+        continue
+      }
+      if (!/\.(md|py|ts|tsx|js|json|txt|ya?ml|toml|sh)$/.test(e.name)) continue
+      let body
+      try {
+        body = readFileSync(p, "utf8")
+      } catch {
+        continue
+      }
+      let next = body
+      for (const l of leaks) next = next.split(l.path).join("<outside-repo>")
+      if (next !== body) {
+        writeFileSync(p, next)
+        n++
+      }
+    }
+  }
+  walk(dir)
+  return n
 }
 
 // A kit-free home. Config and instructions come from nowhere; auth and the
@@ -176,7 +303,7 @@ function fingerprint(dir) {
   return h.digest("hex").slice(0, 16)
 }
 
-function parseStream(file) {
+function parseStream(file, root = TARGET_REAL) {
   const reads = [], searches = [], others = [], escaped = new Set()
   let steps = 0, inputTokens = 0, reasoning = 0, finalCtx = 0, text = "", first = null, last = null
   for (const line of readFileSync(file, "utf8").split("\n")) {
@@ -194,7 +321,7 @@ function parseStream(file) {
       // and wrote to the real repository; --dir should stop that, and this is
       // the check that proves it did rather than assuming it.
       for (const k of ["filePath", "path"]) {
-        if (typeof input[k] === "string" && !isInsideTarget(input[k])) escaped.add(input[k])
+        if (typeof input[k] === "string" && !isInsideTarget(input[k], root)) escaped.add(input[k])
       }
       if (p.tool === "read") {
         reads.push(input.offset !== undefined || input.limit !== undefined)
@@ -228,7 +355,7 @@ function parseStream(file) {
   }
 }
 
-function runArmCapture(arm, home, id, idx, outDir, prompt) {
+function runArmCapture(arm, home, id, idx, outDir, prompt, runDir) {
   const out = join(outDir, `${id}-${arm}-${idx}.json`)
   const env = { ...process.env }
   if (arm === "off") env.HOME = home
@@ -236,8 +363,8 @@ function runArmCapture(arm, home, id, idx, outDir, prompt) {
   // --dir is not optional. Nested inside an opencode session, `opencode run`
   // otherwise inherits the *parent* session's project directory and reads the
   // wrong repository entirely - which it did on the first pilot.
-  const { stdout } = spawnSync("opencode", ["run", "--dir", target, "--format", "json", prompt], {
-    cwd: target, env, encoding: "utf8", maxBuffer: 256 * 1024 * 1024,
+  const { stdout } = spawnSync("opencode", ["run", "--dir", runDir, "--format", "json", prompt], {
+    cwd: runDir, env, encoding: "utf8", maxBuffer: 256 * 1024 * 1024,
     timeout: runTimeoutMs, killSignal: "SIGKILL",
   })
   writeFileSync(out, stdout ?? "")
@@ -249,56 +376,121 @@ function runArmCapture(arm, home, id, idx, outDir, prompt) {
   }
 }
 
-const nokit = makeNokitHome()
-const outDir = mkdtempSync(join(tmpdir(), "opencode-ab-out-"))
+const nokit = rescoreDir ? null : makeNokitHome()
+const outDir = rescoreDir ?? mkdtempSync(join(tmpdir(), "opencode-ab-out-"))
 const before = fingerprint(target)
 
-console.log(`A/B: ${jobs.length} task(s) x ${reps} rep(s) per arm, alternating`)
+console.log(`A/B: ${jobs.length} task(s) x ${reps} rep(s) per arm${rescoreDir ? ", rescored" : ", alternating"}`)
 console.log(`  target  ${target}`)
 for (const j of jobs) console.log(`  task    ${j.id}`)
 console.log(`  timeout ${runTimeoutMs / 1000}s per run`)
-console.log(`  kit-off home ${nokit}`)
+if (nokit) console.log(`  kit-off home ${nokit}`)
 console.log("")
 
 const runs = []
-for (const job of jobs) {
+const keptCopies = []
+if (rescoreDir) {
+  const byId = new Map(jobs.map((j) => [j.id, j]))
+  for (const f of readdirSync(rescoreDir).filter((x) => x.endsWith(".json")).sort()) {
+    const m = /^(.+)-(on|off)-(\d+)\.json$/.exec(f)
+    if (!m) continue
+    const job = byId.get(m[1])
+    if (!job) {
+      console.error(`  skipping ${f}: no task named ${m[1]}`)
+      continue
+    }
+    const file = join(rescoreDir, f)
+    const s = parseStream(file, TARGET_REAL)
+    const invalid = s.steps === 0
+    let ok = null
+    let why
+    if (job.mutate) {
+      why = "mutation not rescored"
+    } else if (invalid) {
+      why = "no output, not scored"
+    } else {
+      const g = gradeAnswer(target, s.text, job.want)
+      ok = g.ok
+      why = g.ok ? `cited ${g.cited}` : g.cited === 0 ? "no citation" : `cited ${g.cited}, none held`
+    }
+    runs.push({ id: job.id, arm: m[2], i: Number(m[3]), ...s, wall: s.seconds, code: 0, timedOut: false, invalid: invalid || job.mutate, correct: ok, why })
+    console.log(`  ${job.id} ${m[2]}-${m[3]} ... ${why}`)
+  }
+  console.log("")
+} else for (const job of jobs) {
   for (let i = 1; i <= reps; i++) {
     for (const arm of ["on", "off"]) {
+      // Every run gets its own throwaway copy of the subject. A read-only task
+      // does not need one, but sharing a tree between an editing task and
+      // anything else is how a run inherits the previous run's work.
+      const runDir = mkdtempSync(join(tmpdir(), `opencode-ab-run-${job.id}-`))
+      cpSync(target, runDir, { recursive: true })
+      if (sanitize && leaks.length) sanitizeCopy(runDir)
       process.stdout.write(`  ${job.id} ${arm}-${i} ... `)
-      const r = runArmCapture(arm, nokit, job.id, i, outDir, job.task)
-      const m = parseStream(r.out)
-      // Each --expect is a group; alternatives inside it are separated by "|".
-      // A task can have more than one defensible answer, and both arms finding
-      // `judge.py:348` instead of the `score.py` I first assumed is exactly the
-      // case where a strict check reports a quality difference that is not there.
-      const hit = (e) =>
-        e.split("|").some((alt) => m.text.toLowerCase().includes(alt.trim().toLowerCase()))
-      const ok = job.expect.every(hit)
-      runs.push({ id: job.id, arm, i, ...m, wall: r.wall, code: r.code, timedOut: r.timedOut, correct: ok })
-      // Stop the moment an arm reaches outside the target. The first pilot wrote
-      // to the real repository while the task said not to modify anything, so a
-      // second arm is not worth the risk once this has happened.
+      const r = runArmCapture(arm, nokit, job.id, i, outDir, job.task, runDir)
+      const runReal = realpathSync(runDir)
+      const m = parseStream(r.out, runReal)
+      // Grade against the repository, not against a string I typed. The
+      // substring grader produced three wrong numbers in RESULTS.md; this
+      // resolves every citation the agent made and reads the real line.
+      let ok
+      let why = ""
+      // A run that emitted nothing was not answered, it did not start. One such
+      // run was scored as a wrong answer before this check existed, which is
+      // the same class of error as the substring grader: measuring the harness
+      // instead of the agent. Invalid runs are excluded, not counted.
+      const invalid = r.timedOut || m.steps === 0
+      if (invalid) {
+        ok = null
+        why = r.timedOut ? "TIMED OUT, not scored" : "no output, not scored"
+      } else if (job.mutate) {
+        const g = gradeMutation(runDir, job.mutate)
+        ok = g.ok
+        why = g.ok ? "edit ok" : `edit MISS (${g.reason})`
+      } else {
+        const g = gradeAnswer(runDir, m.text, job.want)
+        ok = g.ok
+        why = g.ok ? `cited ${g.cited}` : g.cited === 0 ? "no citation" : `cited ${g.cited}, none held`
+      }
+      runs.push({ id: job.id, arm, i, ...m, wall: r.wall, code: r.code, timedOut: r.timedOut, invalid, correct: ok, why })
+      // Stop the moment an arm reaches outside the run directory. The first
+      // pilot wrote to the real repository while the task said not to modify
+      // anything, so a second arm is not worth the risk once this has happened.
       if (m.escaped.length) {
         console.log(`ESCAPED`)
         console.error("")
-        console.error(`FAIL: ${job.id} ${arm}-${i} touched ${m.escaped.length} path(s) outside ${TARGET_REAL}`)
+        console.error(`FAIL: ${job.id} ${arm}-${i} touched ${m.escaped.length} path(s) outside ${runDir}`)
         for (const p of m.escaped.slice(0, 10)) console.error(`  ${p}`)
         console.error("")
         console.error("Stopping. Do not run further arms against a target the agent escapes.")
         console.error(`raw stream kept for inspection: ${r.out}`)
+        console.error(`run copy kept for inspection: ${runDir}`)
         process.exit(1)
       }
       console.log(
         `${m.tools} tools, ${m.narrow_pct}% narrow, ${m.finalCtx} ctx, ${r.wall}s` +
-          (r.timedOut ? ", TIMED OUT" : `, answer ${ok ? "ok" : "MISS"}`),
+          (r.timedOut ? ", TIMED OUT" : `, ${why}`),
       )
+      // Read-only tasks never touched the copy. An editing task's copy is kept
+      // so a wrong edit can be read, which is the only way to tell a mistake
+      // from a mis-scored answer.
+      if (!job.mutate) rmSync(runDir, { recursive: true, force: true })
+      else keptCopies.push(runDir)
     }
   }
 }
 
 const after = fingerprint(target)
 // Median, never mean. See median() in ./metrics.js for the run that proves why.
-const stat = (arm, key) => median(runs.filter((r) => r.arm === arm).map((r) => r[key]))
+// Invalid runs are excluded everywhere: a process that emitted nothing has no
+// tools, no tokens and no answer, and including its zeros would drag every
+// median toward looking as though the agent did nothing at all.
+const scored = runs.filter((r) => !r.invalid)
+const stat = (arm, key) => median(scored.filter((r) => r.arm === arm).map((r) => r[key]))
+const scoreOf = (arm) => {
+  const rs = scored.filter((r) => r.arm === arm)
+  return `${rs.filter((r) => r.correct).length}/${rs.length}`
+}
 
 const rows = [
   ["tool calls", stat("on", "tools"), stat("off", "tools")],
@@ -310,8 +502,14 @@ const rows = [
   ["input tokens", stat("on", "inputTokens"), stat("off", "inputTokens")],
   ["final ctx", stat("on", "finalCtx"), stat("off", "finalCtx")],
   ["wall seconds", stat("on", "wall"), stat("off", "wall")],
-  ["correct", runs.filter((r) => r.arm === "on" && r.correct).length, runs.filter((r) => r.arm === "off" && r.correct).length],
-  ["escaped paths", runs.filter((r) => r.arm === "on").reduce((a, r) => a + r.escaped.length, 0), runs.filter((r) => r.arm === "off").reduce((a, r) => a + r.escaped.length, 0)],
+  ["correct", scoreOf("on"), scoreOf("off")],
+  ["not scored", runs.filter((r) => r.arm === "on" && r.invalid).length, runs.filter((r) => r.arm === "off" && r.invalid).length],
+  // The escape check compares against a per-run copy that no longer exists when
+  // rescoring, so it would report every path as an escape. Report nothing rather
+  // than report something wrong.
+  ...(rescoreDir
+    ? []
+    : [["escaped paths", runs.filter((r) => r.arm === "on").reduce((a, r) => a + r.escaped.length, 0), runs.filter((r) => r.arm === "off").reduce((a, r) => a + r.escaped.length, 0)]]),
 ]
 
 console.log("")
@@ -327,19 +525,24 @@ if (jobs.length > 1) {
   console.log(`  ${"-".repeat(16)} ${"-".repeat(10)} ${"-".repeat(10)}`)
   for (const job of jobs) {
     const score = (arm) => {
-      const rs = runs.filter((r) => r.id === job.id && r.arm === arm)
+      const rs = scored.filter((r) => r.id === job.id && r.arm === arm)
       return `${rs.filter((r) => r.correct).length}/${rs.length}`
     }
     console.log(`  ${job.id.padEnd(16)} ${score("on").padStart(10)} ${score("off").padStart(10)}`)
   }
 }
 
-const timedOut = runs.filter((r) => r.timedOut)
+const bad = runs.filter((r) => r.invalid)
 console.log("")
-if (timedOut.length) {
-  console.log(`  timed out: ${timedOut.map((r) => `${r.id}/${r.arm}-${r.i}`).join(", ")}`)
+if (bad.length) {
+  console.log(`  NOT SCORED (excluded from every number above):`)
+  for (const r of bad) console.log(`    ${r.id}/${r.arm}-${r.i}  ${r.why}`)
 }
-console.log(`  every path stayed under the target: ${runs.every((r) => r.escaped.length === 0) ? "yes" : "NO"}`)
+if (!rescoreDir) {
+  console.log(`  every path stayed under the target: ${runs.every((r) => r.escaped.length === 0) ? "yes" : "NO"}`)
+} else {
+  console.log("  escape check skipped: the per-run copies are gone, so it cannot be re-verified")
+}
 console.log(`  target unchanged: ${before === after ? "yes" : `NO (${before} -> ${after})`}`)
 console.log(`  raw streams: ${outDir}`)
 console.log(`  kit-off home: ${nokit}`)

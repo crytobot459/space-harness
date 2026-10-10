@@ -126,82 +126,106 @@ say anything about cause.
 
 ## The A/B
 
-    node eval/ab.mjs --target <dir> --suite eval/tasks.json --reps 2
+    node eval/ab.mjs --target <dir> --suite eval/tasks.json --reps 2 --sanitize
 
-**This section replaced an earlier version of itself that reported the opposite
-of what it now says.** The first version ran a single task three times per arm
-and read 2/3 against 1/3 in favour of the kit. Widening to four tasks and
-sixteen runs removed that gap entirely. The single-task result was noise, and it
-should not have been written up as a finding in the first place.
+**This section has replaced itself twice, and both times it was wrong.** The
+first version ran one task three times per arm and read 2/3 against 1/3 in
+favour of the kit. The second ran four tasks, sixteen runs, and read the kit as
+1.8x faster. The third run, twenty runs and five tasks including a multi-step
+lookup and an edit, reverses that: the kit is **slower**, 25.4s against 17.4s.
 
-Eight reps per arm across four tasks, alternating so drift in the model route
+The speed number is not real at either sample size. Between the two suite runs
+it changed sign. Treat every wall-clock figure in this file as noise until
+someone runs enough reps to pin it, and treat the correctness column as the only
+one that survived every version.
+
+Ten reps per arm across five tasks, alternating so drift in the model route
 lands on both sides. Kit-off is a throwaway `HOME` with no `~/.config/opencode`,
 so the instruction file, the agent definitions and the plugins are all absent;
 `OPENCODE_CONFIG` and `--pure` do **not** achieve this, both still load
 `GLOBAL.md`. The subject is a `git archive` snapshot of `lablab-harness` at
-`8a674f5`, so both arms read identical bytes. Each task asks a different shape:
-a boolean field, a numeric constant, an inverse lookup, a path literal.
+`8a674f5`, so both arms read identical bytes.
 
-| Metric (median of 8) | kit on | kit off |
+The four read tasks differ in shape: one control lookup in a single file, and
+three that cannot be answered without enumerating candidates first, because the
+repository defines `OUT` in six modules and `BASE` in nineteen. The fifth task
+asks for an edit and is graded by reading the file afterwards.
+
+| Metric (median of 10) | kit on | kit off |
 | --- | --- | --- |
-| wall seconds | **18.4** | 32.7 |
-| tool calls | 5.5 | 4.5 |
-| grep/glob | 2 | 2.5 |
-| narrow reads | 100% | 50% |
-| final context | **14,039** | 15,574 |
-| correct | 7 / 8 | **8 / 8** |
-| paths outside target | 0 | 0 |
+| wall seconds | 25.4 | **17.4** |
+| tool calls | 5.5 | 3 |
+| narrow reads | 100% | 66.7% |
+| final context | 15,246 | 14,301 |
+| correct (read tasks) | **8 / 8** | **8 / 8** |
+| correct (edit task) | 2 / 2 | 2 / 2 |
+| not scored (edit, run copies discarded) | 2 | 2 |
 
-| per task | kit on | kit off |
-| --- | --- | --- |
-| pass-field | 2/2 | 2/2 |
-| total-weight | 2/2 | 2/2 |
-| inverse-lookup | 1/2 | 2/2 |
-| skills-path | 2/2 | 2/2 |
+**The kit is not faster and not more accurate.** Both arms answered every read
+task correctly and made every edit. The one apparent kit-off miss in the raw run
+was an ambiguity in the task, not an error: `agent/judge.py` has two real submit
+guards, line 345 rejecting `total < 5` and line 348 rejecting `total < 7`, and
+the run cited line 345, which is a correct answer to a question that did not say
+which one it wanted. The task now names the threshold. After that fix both arms
+are 8/8.
 
-**The kit is faster and no more accurate.** 18.4s against 32.7s, 1.8x. It ends
-with about 10% less context and reads narrowly every time, against half the time
-for the bare agent. It did not answer better: 7/8 against 8/8, and the single
-kit miss is a scoring artifact rather than a wrong answer - it reported
-`stack: bob` and `weight: 25` correctly but called the file "the rubric" instead
-of writing `rubric.py`, and the checker required that literal. Scored on
-substance it is 8/8 against 8/8.
+The context figures moved by less than 7% and in the direction opposite to
+Result 2 and 3, which is another reason not to read much into them.
 
 ### What this does not establish
 
-- **n=8 per arm, four tasks, one repository, one language.** Sixteen agent runs.
-  The speed gap is consistent across every task; the correctness result is a tie
-  on sixteen runs, which is not the same as proving there is no difference.
-- **The subject is a Python repo, not TypeScript.** The kit's own tests and
-  effects are elsewhere.
-- **All four tasks are single-file lookups.** The kit is built around finding
-  things, so this suits it. Nothing here measures long multi-step refactors,
-  where a stricter reading habit might cost more than it saves.
-- **Correctness is substring matching, and that has now produced three wrong
-  numbers in this file** - once too loose (`3/3` on a bare digit), once pointed
-  at the wrong file, and once marking a substantively correct answer wrong
-  because it said "the rubric" rather than `rubric.py`. Every task answer here
-  has been read by hand against the snapshot.
+- **n=10 per arm, five tasks, one repository, one language.** Twenty agent runs.
+  Correctness is a tie; a tie on twenty runs is not proof of equivalence.
+- **The speed difference changed sign between two suite runs.** 18.4 against
+  32.7, then 25.4 against 17.4. Nothing in this file can support a speed claim.
+- **The subject is a Python repo, not TypeScript.** The kit's own code is
+  TypeScript and is untested here.
+- **Four of five tasks are still lookups.** The edit task is one line in one
+  file. Nothing here measures a long multi-step refactor, where a stricter
+  reading habit might cost more than it saves.
 - **Wall clock is not controlled for load.** Arms alternate, which helps, but
-  sixteen runs share one model route.
+  twenty runs share one model route.
 
 ### What went wrong getting here
 
-Four measurement bugs survived long enough to be written down here as results.
+Six measurement bugs survived long enough to be written down here as results.
 The pattern is the same in every case: a tool I wrote reported a number, and the
-number looked plausible.
+number looked plausible. Four were in the grader, one was a sample too small to
+mean anything, and one was my own task wording. Not one was a wrong answer from
+the agent.
 
-**The single-task result did not replicate.** This section originally claimed
-the kit answered better, 2/3 against 1/3. Four tasks and three times the runs
-showed 7/8 against 8/8. That claim was noise presented as a finding, and no
-amount of arithmetic would have caught it - only a different sample.
+**The grader could not read the shape models actually answer in.** A run wrote
+`**File:** \`agent/score.py\` **Line:** 214` and quoted the line perfectly. The
+citation pattern required digits to follow the word "line" directly, so the
+markdown emphasis and the colon broke it and a correct answer scored zero. It
+cost 9/10 against 9/10 on both arms, and `--rescore` was added so that fixing a
+grader no longer costs twenty agent runs.
 
-**The task was ambiguous and the checker silently believed the wrong answer.**
-The first version asked for "the threshold the total score must reach for pass
-to be true". There are two: `agent/score.py:214` assigns `"pass": total >= 55`,
-and `agent/judge.py:348` is `if total < 7`, a submit gate on a different scale.
-Every arm answered `score.py` and was scored wrong. The task now names the
-boolean field explicitly.
+**A run that never started was scored as a wrong answer.** One kit-off run
+emitted zero bytes and was killed at the timeout. Counting its zero tools, zero
+tokens and zero answer made the agent look like it did nothing. Runs that emit
+nothing are now excluded from every figure and reported separately as not scored.
+
+**The subject leaked its way out of the sandbox.** The snapshot contained 14
+absolute paths that resolve on this machine, including one to a checkout
+unrelated to this work. A kit-on agent read a README, followed one, and opened
+files in the real `lablab-harness` tree - read-only, and only by luck of what it
+did next. `ab.mjs` now scans the subject for such paths and refuses to run
+unless they are scrubbed or explicitly allowed.
+
+**A sample of six runs was written up as a finding.** This section originally
+claimed the kit answered better, 2/3 against 1/3. Widening the sample removed
+it, and the next suite reversed the speed claim too. Neither would have been
+caught by any arithmetic.
+
+**The task was ambiguous, twice.** First it asked for "the threshold the total
+score must reach for pass to be true", which has two answers in the repository:
+`agent/score.py:214` assigns `"pass": total >= 55` and `agent/judge.py:348` is a
+submit gate on a different scale. Then it asked for "the comparison that rejects
+a too-low total" and `judge.py` turned out to have two real guards, line 345
+rejecting `total < 5` and line 348 rejecting `total < 7`; a kit-off run cited
+line 345, which is a correct answer to the question as posed, and was scored
+wrong. Both tasks now name the thing they want.
 
 **Durations were ten times too large.** OpenCode event timestamps are in
 milliseconds; `ab.mjs` divided by 100. A 4.4 minute run was reported as 44
