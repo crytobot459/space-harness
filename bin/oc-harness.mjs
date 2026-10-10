@@ -11,10 +11,11 @@
 // The point of the kit: switching models is a data edit, not a code change.
 // Everything model-specific lives in profiles/<id>.json.
 
-import { readFileSync, writeFileSync, existsSync, mkdirSync, rmSync, symlinkSync, readdirSync, readlinkSync, realpathSync } from "node:fs"
+import { chmodSync, copyFileSync, mkdirSync, readFileSync, writeFileSync, existsSync, rmSync, symlinkSync, readdirSync, readlinkSync, realpathSync } from "node:fs"
 import { homedir } from "node:os"
 import { dirname, join, relative } from "node:path"
 import { execFileSync } from "node:child_process"
+import { fileURLToPath } from "node:url"
 
 import {
   loadProfile,
@@ -233,6 +234,33 @@ function cmdInstall() {
   for (const { dest } of installTargets()) {
     console.log(`  ${stamp(`  ${dest.replace(`${homedir()}/`, "~/")}`)}`)
   }
+
+  // The commit gate lives in the repository, not in the home directory, so it
+  // survives a reinstall and can be reviewed. An existing hook is never
+  // overwritten without asking.
+  const hookSrc = fileURLToPath(new URL("./git-hooks/pre-commit", import.meta.url))
+  const hookDest = join(ROOT, ".git/hooks/pre-commit")
+  let hookState = "skipped, not a git repository"
+  if (existsSync(join(ROOT, ".git"))) {
+    let existing = null
+    try {
+      existing = readFileSync(hookDest, "utf8")
+    } catch {}
+    if (existing && !existing.includes("space-harness")) {
+      hookState = `left alone, ${hookDest} already holds something else`
+    } else {
+      try {
+        mkdirSync(join(ROOT, ".git/hooks"), { recursive: true })
+        copyFileSync(hookSrc, hookDest)
+        chmodSync(hookDest, 0o755)
+        hookState = `installed ${hookDest}`
+      } catch (err) {
+        hookState = `could not install: ${err.message}`
+      }
+    }
+  }
+  console.log(`  ${stamp(`pre-commit hook: ${hookState}`)}`)
+
   console.log(
     `\n  ${stamp('then: oc-harness use <profile> && oc-harness verify')}\n` +
       `${stamp("restart opencode for the agents to be picked up")}\n`,

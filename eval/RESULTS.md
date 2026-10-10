@@ -144,6 +144,33 @@ suite all work on a second language and on a subject that fights back.**
 - **One small package, and every task is a lookup.** Not the kit's own codebase.
 - **No edit task here.** The editing task lives in the Python suite only.
 
+## Where the gate thresholds come from
+
+`npm run measure:check` fails below 45% narrow reads or a 20% fall in context per
+request. The 45 is derived rather than picked:
+
+| day since the install | read calls | narrow |
+| --- | --- | --- |
+| Oct 8 | 29 | 69.0% |
+| Oct 9 | 207 | 60.9% |
+| Oct 10 | 239 | 74.9% |
+
+Lowest observed day is 60.9%, and the spread across those three days is 14
+points. A floor one whole spread below the lowest day lands near 45%, so ordinary
+day-to-day movement cannot trip it and anything under it means every day since
+the install was better than the failure. The previous value, 50, sat above that
+margin and would have failed on a day like Oct 9.
+
+**Three days is not a confidence interval.** The margin is one observed spread,
+not a standard deviation, and the floor should be re-derived as days accumulate.
+The context floor of 20% is not derived at all: it sits far below the measured
+45-57% drop, which is the conservative choice, and tightening it would need
+enough days to see how that figure moves.
+
+A per-session distribution was also computed and deliberately not used for this.
+Sessions run bimodally - four of them read 0% narrow, mostly three or four read
+calls each - so a per-session floor would land near zero and catch nothing.
+
 ## What these numbers do not prove
 
 **The two windows are not the same work.** The before-window is dominated by

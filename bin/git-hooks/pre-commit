@@ -1,0 +1,30 @@
+#!/bin/sh
+# Installed by `oc-harness install`. Remove with: rm .git/hooks/pre-commit
+#
+# Runs the offline gate on every commit. The live-install half is deliberately
+# left out: measure and attribute read ~/.local/share/opencode, which is slow,
+# machine-specific, and irrelevant to whether a commit broke the kit.
+#
+# On a machine that has never run OpenCode, test:install cannot run at all, so
+# this hook uses the subset that needs nothing but the repository.
+
+set -e
+
+repo_root=$(git rev-parse --show-toplevel)
+cd "$repo_root"
+
+if [ -n "$SKIP_SPACE_HARNESS_HOOK" ]; then
+  echo "pre-commit: skipped (SKIP_SPACE_HARNESS_HOOK set)"
+  exit 0
+fi
+
+echo "pre-commit: npm run test:all"
+if ! npm run test:all >/tmp/space-harness-hook.log 2>&1; then
+  echo "pre-commit: FAILED. Last lines:"
+  tail -30 /tmp/space-harness-hook.log
+  echo ""
+  echo "Fix it, or commit with --no-verify if you are certain it is not yours."
+  exit 1
+fi
+
+exit 0
