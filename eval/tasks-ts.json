@@ -29,6 +29,16 @@
       "id": "ts-pr-template",
       "task": "This package is shipped as both TypeScript sources and compiled JavaScript. In the TypeScript source only, not the build output, one module writes a pull request template file into the generated workspace. Which module writes it, and what is the filename? Report the file and line. Do not modify any files.",
       "want": "PULL_REQUEST_TEMPLATE.md"
+    },
+    {
+      "id": "ts-edit-rpc",
+      "$comment": "The edit task, which the TypeScript suite was missing. mustNotContain is as important as mustContain: the same string is in dist/solana.js too, so an agent that edits the build output instead of the source gets mustNotContain for free and is caught.",
+      "task": "In the TypeScript source of this package, the Solana verifier defaults to the mainnet RPC endpoint. Change that default to the devnet endpoint at https://api.devnet.solana.com. Make no other changes and do not reformat anything.",
+      "mutate": {
+        "file": "src/solana.ts",
+        "mustContain": ["api.devnet.solana.com"],
+        "mustNotContain": ["api.mainnet-beta.solana.com"]
+      }
     }
   ]
 }

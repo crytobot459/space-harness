@@ -108,9 +108,9 @@ costs; it shrinks what the agent drags along behind it.
 
     node eval/ab.mjs --target <dir> --suite eval/tasks-ts.json --reps 1 --sanitize
 
-**A pilot, not a result. Three runs per arm.** The kit is written in TypeScript
-and the suite above is Python, which is the wrong language for the code being
-judged. This closes the gap just enough to say whether the harness works there.
+**A pilot, not a result.** The kit is written in TypeScript and the Python suite
+above is Python, which is the wrong language for judging the code. This closes
+the gap just enough to say whether the harness works there.
 
 Subject: `vendor/gibwork-sentinel` from `gibwork-agent-harness` - 692 lines of
 TypeScript in seven modules, shipped beside compiled JavaScript in `dist/`. Every
@@ -120,29 +120,52 @@ wrong, which is the whole reason this subject is worth having. All three answers
 were checked to occur in exactly one file under `src/` before the tasks were
 written, because two earlier tasks were wrong for failing that check.
 
-| Metric (median of 3) | kit on | kit off |
+| Metric (median of 8) | kit on | kit off |
 | --- | --- | --- |
-| wall seconds | 21.3 | 30.9 |
-| tool calls | 4 | 2 |
-| narrow reads | 100% | 0% |
-| final context | 10,758 | 9,411 |
-| correct | 3 / 3 | 3 / 3 |
+| wall seconds | 26.1 | **19.4** |
+| tool calls | 5 | 3.5 |
+| narrow reads | 100% | 16.7% |
+| final context | 10,815 | 9,702 |
+| correct | 8 / 8 | 8 / 8 |
 | paths outside target | 0 | 0 |
 
-Both arms got all three, and both named `src/solana.ts:19` for the RPC default.
-The kit-on answer went further: it noted that the only other occurrences are a
-README badge and the compiled copy, and dismissed both.
+| per task | kit on | kit off |
+| --- | --- | --- |
+| ts-rpc-default | 2/2 | 2/2 |
+| ts-rest-client | 2/2 | 2/2 |
+| ts-pr-template | 2/2 | 2/2 |
+| ts-edit-rpc | 2/2 | 2/2 |
 
-Six runs cannot separate a 21.3s arm from a 30.9s arm, and neither can settle
-whether reading narrowly costs an extra tool call. What this establishes is
-narrower and worth stating plainly: **the grader, the escape detector and the
-suite all work on a second language and on a subject that fights back.**
+Both arms got all four, including the edit. One kit-on answer is worth reading
+for its own sake: it cited `src/scaffold.ts:77` and then said the `dist/` grep
+results were not the answer, because `dist/` is compiled from `src/` and the task
+asked for the source. The trap in this subject is real and the agent saw it.
 
 ### What this does not establish
 
-- **n=3 per arm.** A pilot. Run `--reps 2` or more before quoting any number.
-- **One small package, and every task is a lookup.** Not the kit's own codebase.
-- **No edit task here.** The editing task lives in the Python suite only.
+- **Eight runs per arm, and every task is a lookup or a one-line edit.** Not the
+  kit's own codebase, and nothing here measures a long multi-step refactor.
+- **The speed gap still points the wrong way.** 26.1s against 19.4s, the same
+  direction as the five-task Python suite. See the note below.
+- **Wall clock is uncontrolled for load.** Sixteen runs share one model route.
+
+### The one pattern that holds across suites
+
+Two suites that contain an edit task show the kit **slower**: Python 25.4s
+against 17.4s, TypeScript 26.1s against 19.4s. The one suite that showed it
+faster - 18.4s against 32.7s - had no edit task and was the smaller of the
+three.
+
+That is suggestive and it is the opposite of what the kit is built for. Reading
+narrowly costs an extra tool call per run, 5 against 3.5 here, and on a suite of
+three or four-step lookups that cost does not buy anything back because the bare
+agent was already finding the file. Whether it buys anything back on real work
+is exactly what this suite cannot show, since none of the tasks is real work.
+
+**Correctness is a tie in every suite run so far**: 8/8 against 8/8, 8/8 against
+8/8, and 9/10 against 9/10 before two task ambiguities were fixed. Thirty-eight
+agent runs have not produced a single point of accuracy difference in either
+direction.
 
 ## Where the gate thresholds come from
 
