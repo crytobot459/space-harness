@@ -1,5 +1,8 @@
 # opencode-harness-kit
 
+[![CI](https://github.com/crytobot459/space-harness/actions/workflows/ci.yml/badge.svg)](https://github.com/crytobot459/space-harness/actions/workflows/ci.yml)
+[![npm](https://img.shields.io/npm/v/opencode-harness-kit.svg)](https://www.npmjs.com/package/opencode-harness-kit)
+
 A harness kit for [OpenCode](https://opencode.ai) that is **model-agnostic by
 construction**. Switching models is a data edit, not a code change.
 
