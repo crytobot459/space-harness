@@ -10,17 +10,17 @@ description: Implement one planned task and verify it with a real command. Use w
 1. **Locate before you read.** `grep`/`glob` for the candidate files, then
    `read` with an `offset`/`limit` for the range you need. Reading whole files to
    find out where something lives was the most expensive habit measured on this
-   setup: 2,959 full-file reads against 249 searches.
+   setup: 2,966 full-file reads against 249 searches, about twelve per search.
 2. **Read the whole file before editing it** - not a grep hit, the file. Partial
    reads produce edits that contradict code you did not see.
-2. **Make the smallest change** that satisfies the task. If the task is bigger
+3. **Make the smallest change** that satisfies the task. If the task is bigger
    than it looks, stop and say so rather than quietly expanding it.
-3. **Run the verify command the plan named.** That command, not a different one,
+4. **Run the verify command the plan named.** That command, not a different one,
    not a subset.
-4. **On failure, read the actual message.** Not the last ten lines, the error.
+5. **On failure, read the actual message.** Not the last ten lines, the error.
    Fix the cause, then run it again. The third identical attempt is a signal to
    stop and report.
-5. **Report the command and its verbatim output.**
+6. **Report the command and its verbatim output.**
 
 ## Test-first when the plan called for it
 

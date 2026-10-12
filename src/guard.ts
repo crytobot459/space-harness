@@ -25,7 +25,7 @@ function truncate(s: string, n = 200): string {
   return one.length > n ? `${one.slice(0, n)}...` : one
 }
 
-export const GuardPlugin: Plugin = async () => {
+export const GuardPlugin: Plugin = async ({ worktree }) => {
   return {
     "tool.execute.before": async (input, output) => {
       try {
@@ -39,7 +39,7 @@ export const GuardPlugin: Plugin = async () => {
           const target =
             String(output.args?.filePath ?? output.args?.path ?? "") ||
             String(output.args?.changes?.[0]?.filePath ?? "")
-          const hit = checkWrite(target)
+          const hit = checkWrite(target, undefined, worktree)
           if (hit) deny(hit.name, `${hit.why}\n  file: ${truncate(hit.segment)}`)
         }
       } catch (err) {

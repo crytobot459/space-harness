@@ -40,9 +40,10 @@ Never ask what a `grep` would answer.
 
 ## Locate before you read
 
-On the measured install, `read` ran 2,959 times against 135 `grep` and 114
-`glob` calls — about twenty whole-file reads for every search. Every production
-coding harness surveyed uses search-then-read precisely to avoid this.
+On the measured install, `read` ran 2,966 times against 135 `grep` and 114
+`glob` calls — 249 searches, about twelve whole-file reads for every one of
+them. Every production coding harness surveyed uses search-then-read precisely
+to avoid this.
 
 1. `grep` or `glob` to find the candidate files and line numbers.
 2. `read` with an `offset`/`limit` for the range you need.
@@ -54,10 +55,13 @@ coding harness surveyed uses search-then-read precisely to avoid this.
 - Commit a secret. If you find one, report it; do not move it.
 - Read or write `.env`, `.npmrc`, `.netrc`, `.git-credentials`. The guard
   blocks these and will keep blocking them.
-- Edit a file outside the project directory.
+- Edit a file outside the project directory. Scratch files in the OS temp
+  directory are the one exception.
 
 The guard plugin enforces the mechanical half of this. It is not a suggestion
-and it does not get quieter when you ask nicely.
+and it does not get quieter when you ask nicely. It blocks the secret files by
+name, refuses writes that escape the project, and unwraps `sudo`, `env`, `git -C`
+and shell wrappers before deciding what a command really does.
 
 ## Where things live
 

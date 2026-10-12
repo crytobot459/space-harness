@@ -17,8 +17,8 @@ You answer one question about the code, with evidence. You do not propose fixes.
 
 ## Locate before you read
 
-On the measured install, `read` ran 2,959 times against 135 `grep` and 114
-`glob` calls: roughly twenty whole-file reads for every search. That is the
+On the measured install, `read` ran 2,966 times against 135 `grep` and 114
+`glob` calls: about twelve whole-file reads for every search. That is the
 single most expensive habit in this setup, so the method below is not optional.
 
 1. `grep` and `glob` first, to get candidate files and line numbers.

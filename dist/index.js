@@ -6,8 +6,220 @@ import { mkdirSync as mkdirSync3, writeFileSync as writeFileSync2 } from "node:f
 import { join as join5 } from "node:path";
 
 // src/rules.js
+import { homedir, tmpdir } from "node:os";
+import { resolve as resolvePath, sep } from "node:path";
+var CASE_INSENSITIVE_FS = process.platform === "darwin" || process.platform === "win32";
+function expandHome(p) {
+  if (p === "~")
+    return homedir();
+  if (p.startsWith("~/"))
+    return resolvePath(homedir(), p.slice(2));
+  return p;
+}
+function insideRoot(target, root) {
+  if (!root)
+    return true;
+  const absTarget = resolvePath(root, expandHome(target));
+  const absRoot = resolvePath(root);
+  if (absTarget === absRoot)
+    return true;
+  const a = CASE_INSENSITIVE_FS ? absTarget.toLowerCase() : absTarget;
+  const b = CASE_INSENSITIVE_FS ? absRoot.toLowerCase() : absRoot;
+  return a.startsWith(b.endsWith(sep) ? b : b + sep);
+}
 function segments(command) {
-  return command.split(/(?:&&|\|\||[;\n|])\s*/g).map((s) => s.trim()).filter(Boolean);
+  const parts = [];
+  let cur = "";
+  let quote = null;
+  const flush = () => {
+    const t = cur.trim();
+    if (t)
+      parts.push(t);
+    cur = "";
+  };
+  for (let i = 0;i < command.length; i++) {
+    const ch = command[i];
+    if (quote) {
+      cur += ch;
+      if (ch === "\\" && quote === '"') {
+        if (i + 1 < command.length)
+          cur += command[++i];
+        continue;
+      }
+      if (ch === quote)
+        quote = null;
+      continue;
+    }
+    if (ch === "\\") {
+      cur += ch;
+      if (i + 1 < command.length)
+        cur += command[++i];
+      continue;
+    }
+    if (ch === "'" || ch === '"') {
+      quote = ch;
+      cur += ch;
+      continue;
+    }
+    if (ch === `
+` || ch === ";") {
+      flush();
+      continue;
+    }
+    if (ch === "|") {
+      flush();
+      if (command[i + 1] === "|")
+        i++;
+      continue;
+    }
+    if (ch === "&" && command[i + 1] === "&") {
+      flush();
+      i++;
+      continue;
+    }
+    cur += ch;
+  }
+  flush();
+  return parts;
+}
+function tokenize(segment) {
+  const tokens = [];
+  let cur = "";
+  let quote = null;
+  let started = false;
+  const flush = () => {
+    if (cur || started)
+      tokens.push(cur);
+    cur = "";
+    started = false;
+  };
+  for (let i = 0;i < segment.length; i++) {
+    const ch = segment[i];
+    if (quote) {
+      if (ch === "\\" && quote === '"') {
+        if (i + 1 < segment.length)
+          cur += segment[++i];
+        continue;
+      }
+      if (ch === quote) {
+        quote = null;
+        continue;
+      }
+      cur += ch;
+      continue;
+    }
+    if (ch === "\\" && i + 1 < segment.length) {
+      cur += segment[++i];
+      started = true;
+      continue;
+    }
+    if (ch === "'" || ch === '"') {
+      quote = ch;
+      started = true;
+      continue;
+    }
+    if (/\s/.test(ch)) {
+      flush();
+      continue;
+    }
+    cur += ch;
+  }
+  flush();
+  return tokens;
+}
+var ENV_ASSIGN = /^[A-Za-z_][A-Za-z0-9_]*=/;
+var GIT_WRAPPERS = new Set(["env", "sudo", "doas", "nohup", "time", "command", "exec", "xargs"]);
+var WRAPPER_VALUE_FLAGS = new Set(["-u", "--user", "-g", "--group", "-I", "-P", "-n", "-a", "-d"]);
+var GIT_VALUE_FLAGS = new Set([
+  "-C",
+  "-c",
+  "--git-dir",
+  "--work-tree",
+  "--namespace",
+  "--super-prefix",
+  "--exec-path",
+  "--config-env"
+]);
+var GIT_GLOBAL_FLAGS = new Set([
+  "--bare",
+  "--no-pager",
+  "--paginate",
+  "--no-replace-objects",
+  "--no-optional-locks",
+  "--literal-pathspecs",
+  "--glob-pathspecs",
+  "--icase-pathspecs"
+]);
+function skipPrefixes(tokens) {
+  let i = 0;
+  for (;; ) {
+    const word = tokens[i];
+    if (word === undefined)
+      return tokens.length;
+    if (ENV_ASSIGN.test(word)) {
+      i++;
+      continue;
+    }
+    if (GIT_WRAPPERS.has(word)) {
+      i++;
+      while (i < tokens.length && tokens[i].startsWith("-") && tokens[i] !== "-") {
+        const flag = tokens[i];
+        i++;
+        if (WRAPPER_VALUE_FLAGS.has(flag) && i < tokens.length)
+          i++;
+      }
+      continue;
+    }
+    return i;
+  }
+}
+function stripPrefixes(segment) {
+  const tokens = tokenize(segment);
+  const i = skipPrefixes(tokens);
+  if (i >= tokens.length)
+    return "";
+  const rest = tokens.slice(i);
+  const slash = Math.max(rest[0].lastIndexOf("/"), rest[0].lastIndexOf("\\"));
+  if (slash !== -1)
+    rest[0] = rest[0].slice(slash + 1);
+  return rest.join(" ");
+}
+function gitSubcommand(segment) {
+  const tokens = tokenize(segment);
+  let i = skipPrefixes(tokens);
+  if (i >= tokens.length)
+    return null;
+  if (!/(^|[\\/])git(\.exe)?$/i.test(tokens[i]))
+    return null;
+  i++;
+  while (i < tokens.length) {
+    const flag = tokens[i];
+    if (GIT_VALUE_FLAGS.has(flag)) {
+      i += 2;
+      continue;
+    }
+    if (/^--[A-Za-z][\w-]*=/.test(flag) || GIT_GLOBAL_FLAGS.has(flag)) {
+      i++;
+      continue;
+    }
+    break;
+  }
+  return tokens[i] ?? null;
+}
+var SHELL_BIN = /(^|[\\/])(sh|bash|zsh|dash|ksh)(\.exe)?$/i;
+var MAX_SHELL_DEPTH = 2;
+function shellPayload(segment) {
+  const tokens = tokenize(segment);
+  if (tokens.length < 2)
+    return null;
+  if (tokens[0] === "eval")
+    return tokens.slice(1).join(" ") || null;
+  if (!SHELL_BIN.test(tokens[0]))
+    return null;
+  const c = tokens.findIndex((t) => /^-[a-zA-Z]*c$/.test(t));
+  if (c === -1 || c === tokens.length - 1)
+    return null;
+  return tokens.slice(c + 1).join(" ") || null;
 }
 var BASH_RULES = [
   {
@@ -31,13 +243,13 @@ var BASH_RULES = [
   {
     name: "git push with force",
     scope: "segment",
-    test: /^git\s+push\b(?!.*--(dry-run|-n)\b).*(--force|-f)\b/i,
+    check: (seg) => gitSubcommand(seg) === "push" && tokenize(seg).some((w) => w === "--force" || w === "-f" || w.startsWith("--force")),
     why: "overwrites published history"
   },
   {
     name: "git push",
     scope: "segment",
-    test: /^git\s+push\b(?!.*--dry-run\b)(?!.*(^|\s)-n(\s|$))/i,
+    check: (seg) => gitSubcommand(seg) === "push" && !tokenize(seg).some((w) => w === "--dry-run" || w === "-n"),
     why: "publishing is a human decision"
   },
   {
@@ -78,32 +290,55 @@ var WRITE_RULES = [
     why: "private key material"
   }
 ];
-function checkBash(command, rules = BASH_RULES) {
+function matches(rule, text) {
+  if (rule.check)
+    return rule.check(text);
+  if (!rule.test?.test(text))
+    return false;
+  return !rule.unless?.test(text);
+}
+function checkBash(command, rules = BASH_RULES, depth = 0) {
   if (!command || !command.trim())
     return null;
   const parts = segments(command);
+  const normalized = parts.map((seg) => stripPrefixes(seg));
   for (const rule of rules) {
     if (rule.scope === "command") {
-      if (rule.test.test(command))
+      if (matches(rule, command))
         return { name: rule.name, why: rule.why, segment: command };
       continue;
     }
+    for (let i = 0;i < parts.length; i++) {
+      if (matches(rule, normalized[i]))
+        return { name: rule.name, why: rule.why, segment: parts[i] };
+    }
+  }
+  if (depth < MAX_SHELL_DEPTH) {
     for (const seg of parts) {
-      if (rule.test.test(seg))
-        return { name: rule.name, why: rule.why, segment: seg };
+      const payload = shellPayload(seg);
+      if (!payload)
+        continue;
+      const hit = checkBash(payload, rules, depth + 1);
+      if (hit)
+        return hit;
     }
   }
   return null;
 }
-function checkWrite(target, rules = WRITE_RULES) {
+function checkWrite(target, rules = WRITE_RULES, root = "") {
   if (!target)
     return null;
   for (const rule of rules) {
-    if (!rule.test.test(target))
-      continue;
-    if (rule.unless?.test(target))
+    if (!matches(rule, target))
       continue;
     return { name: rule.name, why: rule.why, segment: target };
+  }
+  if (root && !insideRoot(target, root) && !insideRoot(target, tmpdir())) {
+    return {
+      name: "write outside the project",
+      why: `this project's files are the ones you were asked to change, and ${root} is where they live`,
+      segment: target
+    };
   }
   return null;
 }
@@ -119,7 +354,7 @@ function truncate(s, n = 200) {
   const one = s.replace(/\s+/g, " ").trim();
   return one.length > n ? `${one.slice(0, n)}...` : one;
 }
-var GuardPlugin = async () => {
+var GuardPlugin = async ({ worktree }) => {
   return {
     "tool.execute.before": async (input, output) => {
       try {
@@ -132,7 +367,7 @@ var GuardPlugin = async () => {
         }
         if (input.tool === "write" || input.tool === "edit" || input.tool === "patch") {
           const target = String(output.args?.filePath ?? output.args?.path ?? "") || String(output.args?.changes?.[0]?.filePath ?? "");
-          const hit = checkWrite(target);
+          const hit = checkWrite(target, undefined, worktree);
           if (hit)
             deny(hit.name, `${hit.why}
   file: ${truncate(hit.segment)}`);
