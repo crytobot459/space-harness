@@ -10,16 +10,16 @@ Most wasted agent time is not bad code, it is solving the wrong problem well.
 ## The loop these four skills form
 
 ```
-space-plan ──dispatch one task──▶ space-build ──verify passes──▶ space-review
-      ▲                                                                │
-      │                                                          pass 1 clean
-      │                                                                │
-      └──────────────── blocker, back to build ◀─────────────────── space-finish
+space-plan ─one task─▶ space-build ─verify passes─▶ space-review ─pass 1 clean─▶ space-finish ─▶ human
+                                ▲                         │
+                                └──── back to build, on a blocker: the file:line, the requirement
+                                                          missed, and the failing output
 ```
 
-It is a cycle, not a line. `space-review` returning a blocker is the loop
-working, not the loop failing; the only way out of a blocker is to go and fix
-the thing. Each edge names what it hands over:
+The only backwards edge is `space-review → space-build`: a blocker is the loop
+working, not the loop failing, and the only way out of a blocker is to fix the
+thing it names. `space-plan` is never a backwards edge. Each forward edge names
+what it hands over:
 
 | From | To | Hands over |
 |---|---|---|
@@ -32,6 +32,20 @@ the thing. Each edge names what it hands over:
 **Re-plan only when the request itself was wrong**, not when a task turns out
 harder than estimated. The second case is a build failure and belongs in
 `space-build`.
+
+## Write the plan down
+
+A plan that only lives in the context gets lost the first time the context is
+pruned, which is exactly the moment the loop needs it. So the plan ends as a
+file, and every later step reads the file instead of the conversation.
+
+- Path: `.space/tasks.md` in the project you are planning for.
+- Format: [`reference/task-template.md`](reference/task-template.md) — goal,
+  constraints, decisions, risks, and one task per bullet with its files, its
+  concrete change, and its verify command.
+- `space-plan` creates it and keeps the Tasks section current. `space-build`
+  works from the task in the file. `space-review` diffs against it.
+  `space-finish` treats any task still `pending` or `blocked` as unfinished.
 
 ## When this applies
 
@@ -64,12 +78,16 @@ Skip it for a single obvious edit. Writing a plan for `fix the typo` is waste.
 5. **Order so the repository stays working.** Every step should leave the tests
    green. A plan whose middle step is red is a plan that gets abandoned.
 6. **Name the risks** and the cheapest way to find out early.
+7. **Write it to `.space/tasks.md`** using `reference/task-template.md`, then
+   hand that file over with the plan summary.
 
 ## What to hand off
 
-A markdown plan. Then dispatch each task to `space-build` one at a time, and
-`space-review` after the set. Use the `locate` agent to close gaps in your
-evidence first: it is read-only, and a gap closed before the plan is written
+The `.space/tasks.md` file, plus a summary a reviewer can read in one screen:
+the goal sentence, the decisions you made rather than asked about, and the risks.
+Then let the agent that runs the plan load the `space-build` skill for one task at
+a time and `space-review` after the set. Use the `locate` agent to close gaps in
+your evidence first: it is read-only, and a gap closed before the plan is written
 costs a fraction of a gap found during the build.
 
 Do not batch the builds. One task at a time is what keeps the verify command

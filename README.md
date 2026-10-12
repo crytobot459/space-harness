@@ -294,6 +294,27 @@ Each role carries a `steps` cap. It is a loop breaker, not a quality knob: on
 exhaustion OpenCode forces a text-only response, so an agent that has stopped
 making progress reports rather than looping until the context is gone.
 
+## The skill loop
+
+The roles above are the *who*. The skills are the *order*, and they load by
+name from `skills/`:
+
+| skill | step | hands to |
+|---|---|---|
+| `space-plan` | plan before code; one task at a time | `space-build` |
+| `space-build` | implement and verify exactly one task | `space-review` |
+| `space-review` | two passes; blockers back to build, a clean pass 1 onward | `space-build` or `space-finish` |
+| `space-finish` | final checks, summary, publish decision | a human |
+
+The loop's memory is `.space/tasks.md` in the project being worked on, written
+by the plan step from
+[`skills/space-plan/reference/task-template.md`](skills/space-plan/reference/task-template.md).
+Context is pruned; the file is not. Any step that stops reading it works from
+the conversation instead of the requirement.
+
+Publishing is never a loop step. `space-finish` prepares the change; a human
+decides it ships.
+
 ## Known limits
 
 Read [docs/KNOWN-LIMITS.md](docs/KNOWN-LIMITS.md) before relying on failover.

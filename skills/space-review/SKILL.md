@@ -10,7 +10,11 @@ noise, and they bury the finding that mattered.
 
 ## Pass 1 - does it do what was asked
 
-Style is out of scope. Only the question of whether the task got done.
+Style is out of scope. Only the question of whether the task got done. The
+requirement is the Tasks section of `.space/tasks.md`, in the format
+`space-plan` wrote — not the conversation, and not your guess at the
+intent. If there is no file, there is no requirement to review against: say
+so and stop.
 
 - Every requirement in the task met? Name the ones that are not, with
   `file:line`.

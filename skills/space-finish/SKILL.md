@@ -11,8 +11,22 @@ over an unreviewed or blocked change is the failure this skill exists to stop.
 
 ## Steps
 
-1. **Run the checks one final time, on the final state of the tree.** A green
+1. **Read `.space/tasks.md` first.** Any task still `pending` or `blocked`
+   means the work is unfinished: stop and say which one. The file is the
+   requirement, same as it was for `space-review`.
+2. **Run the checks one final time, on the final state of the tree.** A green
    suite from before the last edit is not a green suite. Use `verify`.
+3. **Read the diff once more as a whole.** Reviewers read task by task; you
+   read the change as someone who has never seen it will.
+4. **Check the documentation.** Did this change make a document describe
+   something that no longer exists? Fix the document, do not note it for later.
+5. **Write the summary** a person needs in order to trust the change without
+   reading the whole diff. Anything the Decisions section of `.space/tasks.md`
+   marked as deliberately not done belongs in the summary, with its reason.
+6. **Check the install is still whole.** If this project is driven by a generated
+   config or profile, run its verify command. A hand-edit survives a regeneration
+   silently, and that is how a zero-retention claim ends up running on a
+   may-train model.
 2. **Read the diff once more as a whole.** Reviewers read task by task; you
    read the change as someone who has never seen it will.
 3. **Check the documentation.** Did this change make a document describe

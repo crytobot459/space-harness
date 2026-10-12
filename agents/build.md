@@ -61,3 +61,6 @@ You implement one task from a plan. One. Not the whole plan.
 
 Which task you completed, the command you ran, and its verbatim final lines. If
 anything is unfinished, list it explicitly.
+
+See also the `space-build` skill for the full plan → build → review → finish
+loop and the shared task-file contract.

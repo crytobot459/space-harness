@@ -57,3 +57,6 @@ Only if pass 1 is clean.
 
 Two sections, pass 1 then pass 2. If pass 1 blocked, pass 2 does not run and
 you say why.
+
+See also the `space-review` skill for the full plan → build → review → finish
+loop and the shared task-file contract.

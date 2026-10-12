@@ -414,6 +414,33 @@ function cmdVerify() {
     )
   }
 
+  // 7. The skill loop must be installed and loadable. A skill whose SKILL.md
+  //    is missing or whose frontmatter is broken is skipped silently by
+  //    OpenCode, so half the plan -> build -> review -> finish loop can go
+  //    missing without any error surfacing.
+  const skillsDir = join(CONFIG_DIR, "skills")
+  if (!existsSync(skillsDir)) {
+    notes.push("no skills directory: the skill loop is not installed. Run: oc-harness install")
+  } else {
+    let valid = 0
+    for (const name of readdirSync(skillsDir)) {
+      const skillFile = join(skillsDir, name, "SKILL.md")
+      if (!existsSync(skillFile)) {
+        problems.push(`skills/${name} has no SKILL.md - it will never load. Run: oc-harness install`)
+        continue
+      }
+      const front = stripFrontmatter(readFileSync(skillFile, "utf8"))
+      if (front.name !== name) {
+        problems.push(`skills/${name}/SKILL.md names "${front.name ?? "nothing"}", expected "${name}"`)
+      } else if (!front.description) {
+        problems.push(`skills/${name}/SKILL.md has no description - OpenCode needs one to decide when to load it`)
+      } else {
+        valid += 1
+      }
+    }
+    if (valid) ok.push(`${valid} skill(s) valid`)
+  }
+
   console.log(`\n${bold("verify")}  ${stamp(`profile ${p.id} -> ${CONFIG_FILE}`)}\n`)
   for (const o of ok) console.log(`  ${green("✓")} ${o}`)
   for (const nt of notes) console.log(`  ${yellow("!")} ${nt}`)

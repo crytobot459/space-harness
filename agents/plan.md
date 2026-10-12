@@ -56,3 +56,6 @@ anything. You do not write the code.
 ## Report
 
 Markdown. No preamble, no restating the request.
+
+See also the `space-plan` skill for the full plan → build → review → finish
+loop and the shared task-file contract.
