@@ -31,6 +31,7 @@ import { join } from "node:path"
 
 import { elapsedSeconds, median } from "./metrics.js"
 import { gradeAnswer, gradeMutation } from "./verify.mjs"
+import { checkPremises } from "./premises.mjs"
 
 const args = process.argv.slice(2)
 const flag = (...n) => {
@@ -203,6 +204,24 @@ function findLeakedPaths(dir, depth = 0) {
   // One entry per distinct path; the file it came from is only for the message.
   const seen = new Set()
   return found.filter((f) => (seen.has(f.path) ? false : seen.add(f.path)))
+}
+
+// Premises before runs. Seven numbers in eval/RESULTS.md were wrong, and every
+// one was a grader agreeing with the agent about something the subject did not
+// say. A suite whose premises are false cannot be repaired by running it more
+// times, so this refuses to start rather than spending twenty agent runs on one.
+if (suitePath) {
+  const premises = checkPremises(target, JSON.parse(readFileSync(suitePath, "utf8")))
+  for (const w of premises.warnings) console.error(`warn: ${w.id}: ${w.problem}`)
+  if (!premises.ok) {
+    console.error(`FAIL: ${premises.fatal.length} premise(s) in ${suitePath} do not hold against ${target}.`)
+    for (const f of premises.fatal) console.error(`  ${f.id}: ${f.problem}`)
+    console.error("")
+    console.error("Run `node eval/premises.mjs --target <dir> --suite <file>` for the full report.")
+    process.exit(1)
+  }
+  console.error(`ok: all premises in ${suitePath} hold against the subject`)
+  console.error("")
 }
 
 const leaks = findLeakedPaths(target)
@@ -493,6 +512,11 @@ const scoreOf = (arm) => {
 }
 
 const rows = [
+  // Correctness first, and it stays first: of every column here, it is the only
+  // one that came out the same across all three revisions of this suite. The
+  // wall-clock row below changed sign between runs, so it is reported for the
+  // record rather than as something to read a verdict from.
+  ["correct", scoreOf("on"), scoreOf("off")],
   ["tool calls", stat("on", "tools"), stat("off", "tools")],
   ["read calls", stat("on", "reads"), stat("off", "reads")],
   ["narrow reads", stat("on", "narrow"), stat("off", "narrow")],
@@ -502,7 +526,6 @@ const rows = [
   ["input tokens", stat("on", "inputTokens"), stat("off", "inputTokens")],
   ["final ctx", stat("on", "finalCtx"), stat("off", "finalCtx")],
   ["wall seconds", stat("on", "wall"), stat("off", "wall")],
-  ["correct", scoreOf("on"), scoreOf("off")],
   ["not scored", runs.filter((r) => r.arm === "on" && r.invalid).length, runs.filter((r) => r.arm === "off" && r.invalid).length],
   // The escape check compares against a per-run copy that no longer exists when
   // rescoring, so it would report every path as an escape. Report nothing rather

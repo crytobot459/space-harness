@@ -212,9 +212,14 @@ Your numbers stay on your machine; only the script is in the repo.
 | `router.ts` | `config`, `event`, `chat.message` | Moves to the next profile when a route is spent. |
 | `telemetry.ts` | `event`, `tool.execute.after` | Local JSONL, gitignored, never a network call. |
 
-`guard.ts` splits the command on shell separators before matching, so
-`cd repo && git push` is caught rather than only a command that starts with the
-forbidden word.
+`guard.ts` matches against the command a shell would actually run, not the text
+it was handed. It splits on shell separators, honours quotes so that a `;`
+inside a string is an argument rather than a second command, strips `env`,
+`sudo` and `git -C` before matching, and follows `sh -c "..."` into its payload.
+So `cd repo && git push`, `sudo rm -rf /` and `bash -c "git push"` are all
+caught, while `git log --grep push` and `git push origin my-feature-f` are not.
+Writes are scoped to the project directory, with the OS temp directory as the
+one exception GLOBAL.md allows.
 
 Pruning keeps user messages, assistant prose, diffs, and the last few turns
 verbatim, and never touches the in-flight turn. Old reasoning is dropped, since
@@ -305,7 +310,7 @@ npm run check        # everything: build, typecheck, tests, live install, verify
 Or one layer at a time:
 
 ```bash
-npm test             # 62 tests, including the model-agnostic assertions
+npm test             # model-agnostic assertions, no network, no model calls
 npm run typecheck
 npm run eval         # synthetic: pruning, prompt pressure, effort projection
 npm run measure      # is this install behaving? narrow reads, context

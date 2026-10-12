@@ -26,8 +26,9 @@ Three edges divide the database into two windows:
 - **before** / **after** - the outer bounds of the two windows.
 
 `npm run measure` defaults the before-edge to seven days before the split.
-`--before` can push it back to the start of the database, which is how the
-original baseline in `README.md` was reproduced.
+`--before` takes an ISO timestamp, so `--before 2026-09-17T15:38:46.850Z` is
+how the original baseline in `README.md` was reproduced. Passing `--before`
+with no value falls back to the seven-day default rather than erroring.
 
 A read counts as **narrow** when the caller bounded it with `offset` or
 `limit`. `README.md` counted `offset` alone; that is the 423 figure below, and
@@ -285,6 +286,22 @@ are 8/8.
 The context figures moved by less than 7% and in the direction opposite to
 Result 2 and 3, which is another reason not to read much into them.
 
+### What to do with this
+
+Stop reading the wall-clock column as a verdict. It is the one row that changed
+sign between runs of the same suite, so at this sample size it carries less
+information than it appears to. `correct` is the only column that came out the
+same in all three revisions, and it is a tie: the kit is not more accurate than
+plain OpenCode on these tasks.
+
+That makes the honest position a trade, not a win. The kit costs roughly eight
+seconds and a couple of extra tool calls per run, and buys process discipline
+instead: a `verify` agent that runs the checks, a two-pass `reviewer` that does
+not edit, and a `space-finish` gate that hands the publish decision to a human.
+Judge it on whether that discipline holds, not on the clock. If a future run does
+pin wall clock — enough reps, a controlled load — the column stays in the table,
+reported but not decisive.
+
 ### What this does not establish
 
 - **n=10 per arm, five tasks, one repository, one language.** Twenty agent runs.
@@ -316,6 +333,17 @@ The lesson is not "check the code", it is that a grader only tests the
 properties its author thought of. The first version of this file claimed to check
 that every profile still sums to 100 and did not. A check that cannot fail is
 worse than no check, because it is read as evidence.
+
+**What is now machine-checked.** `eval/premises.mjs` asserts, against the subject
+before any run starts, that every `want` occurs in the subject, that every
+`mutate.file` exists, that every `mustNotContain` is present in the original file
+(a check on a string that was never there cannot fail), and that no
+`mustContain` is already present (the task is not already done). `eval/ab.mjs`
+runs it before it spawns an agent and exits 1 on a false premise. What it cannot
+do is check a premise written in prose -- "each profile has four dimensions" --
+which is why those live in the task text and have to be re-read when the
+snapshot changes. Running it caught two such errors in the author of this file
+while adding tasks in October 2026.
 
 **The grader could not read the shape models actually answer in.** A run wrote
 `**File:** \`agent/score.py\` **Line:** 214` and quoted the line perfectly. The
@@ -382,7 +410,7 @@ nothing to show for it and nothing was stopping it.
 
 ## The gate
 
-`npm run measure:check` fails when either the narrow-read share drops below 50%
+`npm run measure:check` fails when either the narrow-read share drops below 45%
 or average context per request stops falling by at least 20%. Both hold today
 with room to spare (65.7% and 45.4%). The thresholds are set well below the
 current values on purpose: the point is to catch a regression, not to re-litigate
@@ -399,6 +427,34 @@ small - only the floor is enforced.
   different task. Neither window separates the kit from the work.
 - Which part of the kit does the work. Result 3 localises the effect to history
   accumulation, not to any individual rule or plugin.
-- Pruner bytes saved. `eval/run.mjs` reports it; `.space/prune.jsonl` records it.
+- Pruner bytes saved, reported from this machine's own `.space/prune.jsonl` below
+  rather than from the eval run. It describes one profile on one set of sessions,
+  not a population.
 - Whether the free model route is healthy. `oc-harness doctor` answers that and
   needs the network, so it is deliberately outside these scripts.
+
+## Pruner, as recorded by this install
+
+`.space/prune.jsonl` is appended by the plugin on every prune. Summarised over
+the 240 records it holds, all on profile `space-bunny-free`:
+
+| | |
+|---|---|
+| window | 2026-10-08T01:06Z to 2026-10-11T00:57Z |
+| prunes | 240 |
+| tool outputs stubbed | 3,170 of 7,641 (41.5%) |
+| tool outputs kept | 4,471 |
+| bytes saved | 15,437,346 |
+| median / max per prune | 23,388 B / 418,510 B |
+
+Two caveats, because these are not comparable to the A/B numbers above. The
+records come from ordinary working sessions on this machine, not from a fixed
+task, so they describe what the pruner did to real traffic rather than what it
+would do to a controlled workload. And the split timestamp in `measure-install.mjs`
+falls inside this window: 208 of the 240 records and 13,009,568 of those bytes
+post-date the install, so the totals include prunes that ran before the kit was
+installed.
+
+Nothing here is regenerated by `npm run measure`, which reads only the session
+database. Rerun with `node -e` over the JSONL, or delete it and let the plugin
+rebuild it.

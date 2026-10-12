@@ -43,6 +43,18 @@
       "want": "\"opencode\" / \"skills\""
     },
     {
+      "id": "read-multi-skills-collision",
+      "$comment": "Two modules define SKILLS as a list of skill names and one defines it as a Path. A grep for SKILLS returns three hits, and only one of them is the path the task asks about. Premise checked with premises.mjs: the two list definitions are byte-identical, so the agent cannot tell them apart by content and has to read which variable each module goes on to use.",
+      "task": "Three modules define a module-level name SKILLS. In two of them it is a list of skill names; in one it is a Path built from the user's home directory. Report the file and line of the one that is a Path, and quote that line. Do not modify any files.",
+      "want": "Path.home() / \".config\" / \"opencode\" / \"skills\""
+    },
+    {
+      "id": "read-multi-weights-outliers",
+      "$comment": "Six profiles, and four of them share the same weights dict. An agent that reads the first profile and assumes the rest match is wrong twice over. The task cannot be answered by grepping one line: the answer requires comparing six dicts and finding which two differ. Premise verified by hand: 20/20/40/20 appears four times, and the two outliers are 20/15/40/25 and 25/25/30/20, so 'Business Value: 15' and 'Technology: 30' each occur exactly once in the file.",
+      "task": "One module defines six stack profiles. Four of the six have identical weights dictionaries. The other two differ from the majority. Report both outliers: the profile name and the exact weights line for each, quoting them. Do not modify any files.",
+      "want": "\"Presentation\": 25, \"Business Value\": 25, \"Technology\": 30"
+    },
+    {
       "id": "edit-rename-output",
       "$comment": "The first task that needs the kit to do work rather than to shortcut it. Graded on the file after the run, not on what the agent says it did. mustNotContain is as important as mustContain: appending the new path without removing the old one is not the change that was asked for.",
       "task": "In agent/portfolio.py the weekly plan is written to work/plan-week.md. Change it so it is written to work/plan-week-v2.md instead. Make no other changes and do not reformat anything.",
@@ -58,8 +70,8 @@
     },
     {
       "id": "edit-multi-profile",
-      "$comment": "The first task that is real work rather than a shortcut: six profiles, six edits, and an agent that stops after the first two is the obvious failure. mustContainMin counts occurrences, because a plain substring check passes that. An earlier version of this task said the weights sum to 100 and asked for a compensating cut. That premise was false - the profiles have three dimensions and sum to 85, 80, 80, 80, 80, 75 - so all four agents correctly preserved sums that were never 100 and the grader passed them. The comment on line 12 of that file claims the total is 100; the code disagrees with itself.",
-      "task": "In agent/rubric.py each stack profile has a weights dictionary with three dimensions. Add a fourth dimension named Robustness with weight 10 to every one of those profile dictionaries, so each profile has four dimensions. Leave the fallback dictionary at the bottom of the file alone. Make no other changes and do not reformat anything.",
+      "$comment": "The first task that is real work rather than a shortcut: six profiles, six edits, and an agent that stops after the first two is the obvious failure. mustContainMin counts occurrences, because a plain substring check passes that. An earlier version of this task said the weights sum to 100 and asked for a compensating cut. That premise was false, the sums were 85/80/75 and not 100, so all four agents correctly preserved sums that were never 100 and the grader passed them anyway. A grader that only counts 'Robustness' occurrences cannot tell that difference, which is the whole reason eval/premises.mjs and the prose premise in the task text both have to be right. Premise for the current wording re-verified against lablab-harness@8a674f5: six profiles in STACK_OVERRIDE, each with a four-dimension weights dict, so adding a fifth is correct, and the fallback dict at the bottom of the file has four dimensions too and must be left alone.",
+      "task": "In agent/rubric.py the STACK_OVERRIDE dict defines six stack profiles, and each profile's weights dictionary has four dimensions. Add a fifth dimension named Robustness with weight 10 to every one of those six profile dictionaries, so each profile has five dimensions. Leave the fallback dictionary at the bottom of the file alone. Make no other changes and do not reformat anything.",
       "mutate": {
         "file": "agent/rubric.py",
         "mustContainMin": {
