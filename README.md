@@ -267,6 +267,25 @@ picks up the right thresholds. To pin a profile explicitly instead:
 export OPENCODE_HARNESS_PROFILE=space-bunny-free
 ```
 
+### On your phone
+
+**Android (Termux)** runs the whole kit locally — same wizard as desktop:
+
+```bash
+pkg install nodejs git
+npx -y opencode-harness-kit init
+```
+
+The kit writes to `$HOME/.config/opencode` like everywhere else, so there is
+nothing phone-specific to learn. Clone the kit repo too if you want the
+pre-commit hook; without a checkout that step is skipped.
+
+**iPhone** cannot run Node locally, so the phone is a remote control, not the
+engine. Run opencode on your Mac or a server (inside `tmux` so it survives a
+dropped connection), then SSH in from the phone — Blink Shell is the usual
+client, Tailscale removes the network setup. The kit, the skills and the
+free-model profiles all live server-side; the phone only needs a keyboard.
+
 ### Permissions: why `edit` is `allow`
 
 The generated config sets `permission.edit: "allow"`, which looks like it
