@@ -4,6 +4,13 @@ A harness kit for [OpenCode](https://opencode.ai) that is **model-agnostic by
 construction**. Switching models is a data edit, not a code change.
 
 ```bash
+npx oc-harness init                  # pick a free model, then install + verify
+```
+
+then restart opencode. That is the whole quickstart. The three steps it runs,
+spelled out for when you want to know what happened:
+
+```bash
 npx oc-harness use space-bunny-free   # compile the profile
 npx oc-harness install                # link the agents, skills and GLOBAL.md
 npx oc-harness verify                 # prove the install is whole
@@ -227,7 +234,14 @@ stale reasoning is worse than none.
 
 ## Install
 
-Two commands, in this order:
+One command if you are new here (`init` asks which free profile to run on,
+then runs the two commands below plus `verify`):
+
+```bash
+npx oc-harness init
+```
+
+Two commands, in this order, if you already know which profile you want:
 
 ```bash
 npx oc-harness use space-bunny-free   # writes opencode.jsonc

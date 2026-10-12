@@ -2,6 +2,7 @@
 // oc-harness - pick a model profile and compile it into an opencode config.
 //
 //   oc-harness list                 profiles with retention and caveats
+//   oc-harness init [--profile <id>]  pick a free profile, then install + use + verify
 //   oc-harness use <id>            write ~/.config/opencode/opencode.jsonc
 //   oc-harness use <id> --print    print the config instead of writing it
 //   oc-harness show <id>           show the resolved effort plan
@@ -16,6 +17,7 @@ import { homedir } from "node:os"
 import { dirname, join, relative } from "node:path"
 import { execFileSync } from "node:child_process"
 import { fileURLToPath } from "node:url"
+import { createInterface } from "node:readline/promises"
 
 import {
   loadProfile,
@@ -50,6 +52,21 @@ const bold = (s) => `\x1b[1m${s}\x1b[0m`
 const yellow = (s) => `\x1b[33m${s}\x1b[0m`
 const green = (s) => `\x1b[32m${s}\x1b[0m`
 const red = (s) => `\x1b[31m${s}\x1b[0m`
+const interactive = () => process.stdin.isTTY && !has("--yes")
+
+/**
+ * A yes question with a yes default. Only asked on a terminal; scripts and
+ * CI pass --yes or get the old silent behaviour, never a hung prompt.
+ */
+async function confirm(question) {
+  const rl = createInterface({ input: process.stdin, output: process.stdout })
+  try {
+    const answer = (await rl.question(`  ${question} [Y/n] `)).trim().toLowerCase()
+    return answer === "" || answer === "y" || answer === "yes"
+  } finally {
+    rl.close()
+  }
+}
 
 function index() {
   const f = join(import.meta.dirname, "..", "profiles", "index.json")
@@ -199,7 +216,7 @@ function installTargets() {
  * up pointing at an instruction file that did not exist while still looking
  * correct. Symlinks rather than copies, so the repo stays the source of truth.
  */
-function cmdInstall() {
+async function cmdInstall() {
   const dist = join(ROOT, "dist", "index.js")
   if (!existsSync(dist)) fail("dist/index.js missing. Run: npm run build")
 
@@ -213,6 +230,23 @@ function cmdInstall() {
     }
     const parent = dirname(dest)
     mkdirSync(parent, { recursive: true })
+
+    // A link that already points at us needs no permission. A file that holds
+    // something else would be destroyed by the link, so that gets a question.
+    if (kind === "file" && existsSync(dest) && interactive()) {
+      let ours = false
+      try {
+        ours =
+          readlinkSync(dest) ===
+          relative(realpathSync(dirname(dest)), realpathSync(src))
+      } catch {
+        ours = false
+      }
+      if (!ours && !(await confirm(`overwrite ${dest}?`))) {
+        console.log(`  ${stamp(`left alone: ${dest}`)}`)
+        continue
+      }
+    }
 
     if (kind === "dir") {
       // Merge rather than replace: the user may keep their own skills beside
@@ -248,6 +282,8 @@ function cmdInstall() {
     } catch {}
     if (existing && !existing.includes("space-harness")) {
       hookState = `left alone, ${hookDest} already holds something else`
+    } else if (!existing && interactive() && !(await confirm("install the pre-commit hook into this repo?"))) {
+      hookState = "skipped at the prompt"
     } else {
       try {
         mkdirSync(join(ROOT, ".git/hooks"), { recursive: true })
@@ -265,6 +301,49 @@ function cmdInstall() {
     `\n  ${stamp('then: oc-harness use <profile> && oc-harness verify')}\n` +
       `${stamp("restart opencode for the agents to be picked up")}\n`,
   )
+}
+
+/**
+ * One command from zero to working. Asks which free profile to run on, then
+ * chains the three commands the README used to make the newcomer memorise.
+ * Anything it would destroy still gets a question unless --yes is passed.
+ *
+ *   oc-harness init [--profile <id>] [--yes]
+ */
+async function cmdInit() {
+  const entries = index().profiles ?? []
+  const free = entries.filter((e) => e.free !== false)
+  if (!free.length) fail("no free profiles in profiles/index.json")
+  let id = opt("--profile")
+  if (!id) {
+    if (!process.stdin.isTTY) {
+      fail("usage: oc-harness init --profile <id> [--yes] (no terminal to ask)")
+    }
+    const def = Math.max(free.findIndex((e) => e.id === index().default), 0)
+    console.log(`\n  ${bold("run on a free model:")}\n`)
+    free.forEach((e, i) =>
+      console.log(`  ${i + 1}. ${e.id}${i === def ? " (default)" : ""}  ${stamp(e.note ?? "")}`),
+    )
+    const answer = (await askChoice(`  pick [1-${free.length}, default ${def + 1}]: `)).trim()
+    const n = answer === "" ? def + 1 : parseInt(answer, 10)
+    if (!Number.isInteger(n) || n < 1 || n > free.length) fail("not a valid choice")
+    id = free[n - 1].id
+  }
+  loadProfile(id) // fail here, before anything is written, on a bad --profile
+  console.log(`\n  ${stamp(`profile: ${id}`)}`)
+  await cmdInstall()
+  await cmdUse(id)
+  cmdVerify()
+  console.log(`\n  ${green("✓")} done. ${stamp("restart opencode, then ask it something")}\n`)
+}
+
+async function askChoice(question) {
+  const rl = createInterface({ input: process.stdin, output: process.stdout })
+  try {
+    return await rl.question(question)
+  } finally {
+    rl.close()
+  }
 }
 
 /**
@@ -506,7 +585,7 @@ function configDrift(p, actual) {
   return out
 }
 
-function cmdUse(id) {
+async function cmdUse(id) {
   if (!id) fail("usage: oc-harness use <profile> [--print] [--yes]")
   const p = loadProfile(id)
   const retention = loadRetention()[`${p.provider}/${p.model}`]
@@ -543,6 +622,11 @@ function cmdUse(id) {
 
   mkdirSync(dirname(CONFIG_FILE), { recursive: true })
   if (existsSync(CONFIG_FILE) && !has("--yes")) {
+    // The config is the user's file once written. A backup is made either
+    // way, but overwriting it without asking is how a hand-tuned setup dies.
+    if (interactive() && !(await confirm(`overwrite ${CONFIG_FILE}? (a .bak backup is kept)`))) {
+      fail("left the existing config alone")
+    }
     writeFileSync(`${CONFIG_FILE}.bak`, readFileSync(CONFIG_FILE))
     console.error(stamp(`  existing config backed up to ${CONFIG_FILE}.bak`))
   }
@@ -834,7 +918,7 @@ try {
       await cmdList()
       break
     case "use":
-      cmdUse(args[1])
+      await cmdUse(args[1])
       break
     case "show":
       cmdShow(args[1])
@@ -846,7 +930,10 @@ try {
       cmdLink()
       break
     case "install":
-      cmdInstall()
+      await cmdInstall()
+      break
+    case "init":
+      await cmdInit()
       break
     case "verify":
       cmdVerify()
@@ -866,6 +953,7 @@ try {
   oc-harness <command>
 
     list      show profiles with retention and caveats
+    init      pick a free profile, then install + use + verify in one go
     use <id>  compile a profile into ${CONFIG_FILE}
     show <id> print the resolved effort plan and derived numbers
     refresh <id>  update capability fields from models.dev
