@@ -408,6 +408,39 @@ count. All sixteen runs above report 0.
 Per-run timeout is in as well, since one kit-off run once took 4.4 minutes with
 nothing to show for it and nothing was stopping it.
 
+### Smoke run on the 8-task suite (October 2026)
+
+Two tasks were added to the suite and this is the first run over it, at
+`--reps 1`. **This is a smoke run, not a measurement.** One repetition per arm
+is an anecdote; the rule above about needing reps to mean anything applies to
+this row as much as to the others.
+
+```
+  correct                 8/8        7/8
+  narrow %                100       58.4
+  tool calls                5          3
+  wall seconds             25         24
+  escaped paths             0          0
+```
+
+The one task that separated the arms was `read-multi-weights-outliers`: the
+kit-off run produced no citation and scored 0. That is the point of the task --
+it needs six weight dictionaries compared, and an arm that reads the first one
+and stops does not produce the answer. One task out of eight is a single
+observation, and this run does not establish that the kit is more accurate. It
+establishes that the new tasks are gradeable and that at least one of them can
+be failed.
+
+The context and tool-call numbers here are not the headline the earlier runs
+show. The kit used five tool calls against three, and roughly a thousand more
+input tokens, to get the one extra task right. That trade is only worth making
+if accuracy is what is being measured, and eight tasks at one repetition cannot
+say whether it is.
+
+`ab.mjs` refused the first attempt at this run and was right to. The subject
+contained 14 absolute paths resolving outside itself, one of them a real
+checkout the harness has workspace access to. The run needed `--sanitize`.
+
 ## The gate
 
 `npm run measure:check` fails when either the narrow-read share drops below 45%
