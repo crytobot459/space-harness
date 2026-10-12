@@ -27,6 +27,31 @@ function insideRoot(target, root) {
   const b = CASE_INSENSITIVE_FS ? absRoot.toLowerCase() : absRoot;
   return a.startsWith(b.endsWith(sep) ? b : b + sep);
 }
+var HEREDOC = /^<<(-)?(?:'([A-Za-z_][A-Za-z0-9_]*)'|"([A-Za-z_][A-Za-z0-9_]*)"|([A-Za-z_][A-Za-z0-9_]*))/;
+function heredocEnd(command, at) {
+  if (command[at] !== "<" || command[at + 1] !== "<")
+    return -1;
+  if (command[at + 2] === "<")
+    return -1;
+  const m = HEREDOC.exec(command.slice(at));
+  if (!m)
+    return -1;
+  const delim = m[2] ?? m[3] ?? m[4];
+  const nl = command.indexOf(`
+`, at + m[0].length);
+  if (nl === -1)
+    return -1;
+  for (let p = nl + 1;; ) {
+    const end = command.indexOf(`
+`, p);
+    const line = command.slice(p, end === -1 ? command.length : end);
+    if (line.trim() === delim)
+      return end === -1 ? command.length : end;
+    if (end === -1)
+      return -1;
+    p = end + 1;
+  }
+}
 function segments(command) {
   const parts = [];
   let cur = "";
@@ -60,6 +85,14 @@ function segments(command) {
       quote = ch;
       cur += ch;
       continue;
+    }
+    if (ch === "<" && command[i + 1] === "<") {
+      const end = heredocEnd(command, i);
+      if (end > i) {
+        cur += command.slice(i, end);
+        i = end - 1;
+        continue;
+      }
     }
     if (ch === `
 ` || ch === ";") {

@@ -249,6 +249,24 @@ test("path scope is compared the way the filesystem compares it", () => {
   assert.equal(insideRoot("/Users/dev/application/x", root), false)
 })
 
+test("a heredoc body is data, not commands", () => {
+  // An agent writing a commit message that quotes the command it just fixed
+  // must not be blocked for describing it.
+  const body = ["do not run git push here; and never sudo rm -rf /", "EOF"].join("\n")
+  allowed(`git commit -F - <<'EOF'\n${body}\necho done`)
+  // A real command after the heredoc is still a real command.
+  blocked(`git commit -F - <<'EOF'\n${body}\ngit push`)
+  blocked(`git commit -F - <<'EOF'\n${body}\nsudo rm -rf /`)
+  // Quoted, double-quoted, tab-stripped and unterminated forms.
+  allowed("cat <<'EOF'\ngit push && sudo rm -rf /\nEOF")
+  allowed('cat <<"EOF"\ngit push\nEOF')
+  allowed("cat <<-EOF\n\tgit push\n\tEOF")
+  // Unterminated must not become a blind spot.
+  blocked("cat <<EOF\ngit push")
+  // <<< is a herestring: its value is an argument, and there is no body.
+  allowed("cat <<< 'git push'")
+})
+
 test("rule names are unique so telemetry can attribute a denial", () => {
   const all = [...BASH_RULES, ...WRITE_RULES].map((r) => r.name)
   assert.equal(new Set(all).size, all.length, "duplicate rule names would blur telemetry")

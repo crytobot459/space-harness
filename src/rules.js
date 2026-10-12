@@ -63,9 +63,37 @@ export function insideRoot(target, root) {
  * @typedef {{ name: string, why: string, segment: string }} Hit
  */
 
+const HEREDOC = /^<<(-)?(?:'([A-Za-z_][A-Za-z0-9_]*)'|"([A-Za-z_][A-Za-z0-9_]*)"|([A-Za-z_][A-Za-z0-9_]*))/
+
+/**
+ * The index just past a heredoc body that starts at `at`, or -1. A heredoc
+ * body is data handed to a command, never commands, so it must not be split.
+ * An agent writing a commit message that quotes the command it fixed would
+ * otherwise be blocked for describing the very thing it was asked to remove.
+ * @param {string} command
+ * @param {number} at
+ * @returns {number}
+ */
+function heredocEnd(command, at) {
+  if (command[at] !== "<" || command[at + 1] !== "<") return -1
+  if (command[at + 2] === "<") return -1 // <<< is a herestring, whose value is an argument
+  const m = HEREDOC.exec(command.slice(at))
+  if (!m) return -1
+  const delim = m[2] ?? m[3] ?? m[4]
+  const nl = command.indexOf("\n", at + m[0].length)
+  if (nl === -1) return -1
+  for (let p = nl + 1; ; ) {
+    const end = command.indexOf("\n", p)
+    const line = command.slice(p, end === -1 ? command.length : end)
+    if (line.trim() === delim) return end === -1 ? command.length : end
+    if (end === -1) return -1
+    p = end + 1
+  }
+}
+
 /**
  * Split a shell command into the individual commands it runs. Separators
- * inside quotes are part of an argument, not a command boundary.
+ * inside quotes, and heredoc bodies, are not command boundaries.
  * @param {string} command
  * @returns {string[]}
  */
@@ -99,6 +127,16 @@ export function segments(command) {
       quote = ch
       cur += ch
       continue
+    }
+    // Consume a heredoc body whole, separators and all, before any of its
+    // text can be mistaken for a command.
+    if (ch === "<" && command[i + 1] === "<") {
+      const end = heredocEnd(command, i)
+      if (end > i) {
+        cur += command.slice(i, end)
+        i = end - 1
+        continue
+      }
     }
     if (ch === "\n" || ch === ";") {
       flush()
