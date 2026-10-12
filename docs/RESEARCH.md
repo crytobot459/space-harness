@@ -204,6 +204,7 @@ this kit is for.
 - arXiv:2609.00006 — Harness Engineering, eleven-harness source study
 - `https://opencode.ai/docs/zen/` — pricing, retention, free-tier terms
 - `https://opencode.ai/config.json` — the resolved config schema for 1.18.35
-- `@opencode-ai/plugin@1.18.31` `dist/index.d.ts` — the hook surface
+- `@opencode-ai/plugin@1.18.35` `dist/index.d.ts` — the hook surface (the
+  version actually installed; re-check against it after any plugin bump)
 - `https://models.dev/api.json` — provider and model metadata
 - `anomalyco/opencode` issue #42977 — free-route 429 behaviour

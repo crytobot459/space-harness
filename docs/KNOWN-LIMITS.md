@@ -71,7 +71,10 @@ the generated file is a pointer to nothing.
 ## Model failover happens at the next session, never mid-flight
 
 No OpenCode plugin hook can change the model of a running session. Verified by
-reading `Hooks` in `@opencode-ai/plugin@1.18.31`:
+reading `Hooks` in `@opencode-ai/plugin@1.18.35`. The surface is 21 hooks; of
+the six that mention `model`, five read it as input and the sixth
+(`experimental.provider.small_model`) writes only the utility model, never the
+session's:
 
 | hook | can it change the model? |
 |---|---|
