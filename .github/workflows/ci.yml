@@ -26,7 +26,11 @@ jobs:
           node bin/oc-harness.mjs list
           node bin/oc-harness.mjs show space-bunny-free
           node bin/oc-harness.mjs use space-bunny-free --print | tail -20
-          node bin/oc-harness.mjs use longcat-2.5-preview-free --print | grep -q '"variant"'
+          # longcat has no reasoning API: the loader omits `variant` for every
+          # role of that profile. Assert the count is zero, not merely that the
+          # word appears somewhere — an unmanaged key inherited from a dirty
+          # local config once faked this check green.
+          test "$(node bin/oc-harness.mjs use longcat-2.5-preview-free --print | grep -c '"variant"')" = "0"
       - name: install and verify into a scratch config dir
         run: |
           export OPENCODE_CONFIG_DIR="$RUNNER_TEMP/opencode-config"
