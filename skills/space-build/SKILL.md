@@ -39,3 +39,9 @@ that has never failed has not been shown to test anything.
 
 Which task, which command, which result. If anything is unfinished, list it
 explicitly rather than letting the review step find it.
+
+**If you were handed back here by `space-review`**, you have a blocker with a
+`file:line` and a failing command, not a fresh task. Fix that specific thing.
+Do not re-read the plan, do not look for other improvements, and do not treat
+the review as a suggestion. A blocker that gets fixed together with a refactor
+cannot be verified on its own.

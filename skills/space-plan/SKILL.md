@@ -7,6 +7,32 @@ description: Turn a vague request into an executable plan before any code is wri
 
 Most wasted agent time is not bad code, it is solving the wrong problem well.
 
+## The loop these four skills form
+
+```
+space-plan ──dispatch one task──▶ space-build ──verify passes──▶ space-review
+      ▲                                                                │
+      │                                                          pass 1 clean
+      │                                                                │
+      └──────────────── blocker, back to build ◀─────────────────── space-finish
+```
+
+It is a cycle, not a line. `space-review` returning a blocker is the loop
+working, not the loop failing; the only way out of a blocker is to go and fix
+the thing. Each edge names what it hands over:
+
+| From | To | Hands over |
+|---|---|---|
+| `space-plan` | `space-build` | one task: exact paths, the concrete change, the verify command |
+| `space-build` | `space-review` | the command that ran, and its verbatim output |
+| `space-review` | `space-build` | on a blocker: the `file:line`, the requirement missed, the failing output |
+| `space-review` | `space-finish` | pass 1 clean: the diff as a whole |
+| `space-finish` | human | the summary, the checks, and what was deliberately left undone |
+
+**Re-plan only when the request itself was wrong**, not when a task turns out
+harder than estimated. The second case is a build failure and belongs in
+`space-build`.
+
 ## When this applies
 
 Use it when any of these is true:
@@ -41,8 +67,13 @@ Skip it for a single obvious edit. Writing a plan for `fix the typo` is waste.
 
 ## What to hand off
 
-A markdown plan. Then dispatch each task to `build` one at a time, and
-`reviewer` after the set. Use `scout` to close gaps in your evidence first.
+A markdown plan. Then dispatch each task to `space-build` one at a time, and
+`space-review` after the set. Use the `locate` agent to close gaps in your
+evidence first: it is read-only, and a gap closed before the plan is written
+costs a fraction of a gap found during the build.
+
+Do not batch the builds. One task at a time is what keeps the verify command
+attributable to a change.
 
 ## Failure modes
 

@@ -18,7 +18,10 @@ Style is out of scope. Only the question of whether the task got done.
 - Does the verify command the task named exist, and does it pass?
 - Any file described as changed that is not actually in the diff?
 
-Any failure here is a **blocker**. Report it and stop. Pass 2 does not run.
+Any failure here is a **blocker**. Report it and hand it back to `space-build`
+with the location and the verify output that shows it. A review that stops
+without naming where to go next is a half result: the task is still open and
+now has an extra person who knows it is.
 
 ## Pass 2 - is it any good
 

@@ -1,7 +1,10 @@
 # Ground rules for every project
 
 You are working inside a harness that has already been tuned for the model in
-use. These rules are what the config and the hooks cannot enforce for you.
+use. Everything the config and the hooks can enforce is enforced already: the
+tools, the permissions, the command allowlist, the guard, the per-role effort
+and step caps. This file is only what is left over once those are subtracted --
+the judgement calls no plugin can make for you.
 
 Read this once. It is short on purpose: long instruction lists get followed
 worse, not better.
@@ -74,19 +77,12 @@ next session more than a small code change.
 
 ## Reasoning budget
 
-Effort is assigned per role, not per message. You do not need to think
-harder than the role you are playing:
-
-| Role | What it is for | Effort |
-|---|---|---|
-| `plan` | design, architecture, task breakdown | highest available |
-| `build` | writing and fixing code | middle |
-| `reviewer` | checking against spec, then quality | highest available |
-| `locate` | reading code, reporting `file:line` | lowest |
-| `verify` | running checks, reading output | lowest |
-
-If you are `locate` or `verify` and feel yourself designing an architecture,
-stop. Report the evidence and let `plan` do it.
+Per-role effort and step caps are set in `opencode.json` and enforced by the
+harness, not by anything written here. `plan` and `reviewer` run at the highest
+available effort, `build` in the middle, `locate` and `verify` at the lowest,
+because finding a thing and checking a thing are not design work. If you are
+playing one of the low-effort roles and feel yourself designing an
+architecture, stop and report the evidence instead.
 
 ## When context grows
 

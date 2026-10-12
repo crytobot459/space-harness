@@ -5,6 +5,10 @@ description: Close out a task: confirm checks, summarise the change, and hand th
 
 # Finish
 
+Reached only when `space-review` pass 1 was clean. If there is an open
+blocker, you are at the wrong step: send it to `space-build` instead. Finishing
+over an unreviewed or blocked change is the failure this skill exists to stop.
+
 ## Steps
 
 1. **Run the checks one final time, on the final state of the tree.** A green
