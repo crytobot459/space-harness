@@ -7,13 +7,22 @@ construction**. Switching models is a data edit, not a code change.
 npx oc-harness init                  # pick a free model, then install + verify
 ```
 
-then restart opencode. That is the whole quickstart. The three steps it runs,
-spelled out for when you want to know what happened:
+then restart opencode. That is the whole quickstart. No npm account needed on
+your side — `npx` only downloads the published kit. Prefer git? The same three
+steps from a checkout (see [Install](#install)):
 
 ```bash
-npx oc-harness use space-bunny-free   # compile the profile
-npx oc-harness install                # link the agents, skills and GLOBAL.md
-npx oc-harness verify                 # prove the install is whole
+git clone https://github.com/crytobot459/space-harness.git
+./bin/oc-harness.mjs init
+```
+
+The three steps `init` runs, spelled out for when you want to know what
+happened (prefix with `npx` or `./bin/oc-harness.mjs` to taste):
+
+```bash
+oc-harness use space-bunny-free   # compile the profile
+oc-harness install                # link the agents, skills and GLOBAL.md
+oc-harness verify                 # prove the install is whole
 ```
 
 `use` writes the config. `install` writes everything the config *points at*.
@@ -241,11 +250,13 @@ then runs the two commands below plus `verify`):
 npx oc-harness init
 ```
 
-Two commands, in this order, if you already know which profile you want:
+Two commands, in this order, if you already know which profile you want
+(`npx oc-harness …` from the registry, or `./bin/oc-harness.mjs …` from a
+checkout — they are the same program):
 
 ```bash
-npx oc-harness use space-bunny-free   # writes opencode.jsonc
-npx oc-harness install                # writes everything that file points at
+oc-harness use space-bunny-free   # writes opencode.jsonc
+oc-harness install                # writes everything that file points at
 ```
 
 `install` symlinks (not copies) the plugin, `agents/`, `skills/` and `GLOBAL.md`
@@ -274,6 +285,15 @@ export OPENCODE_HARNESS_PROFILE=space-bunny-free
 ```bash
 pkg install nodejs git
 npx -y opencode-harness-kit init
+```
+
+Not published to npm yet, or no registry access? The checkout path works
+identically:
+
+```bash
+pkg install nodejs git
+git clone https://github.com/crytobot459/space-harness.git
+./space-harness/bin/oc-harness.mjs init
 ```
 
 The kit writes to `$HOME/.config/opencode` like everywhere else, so there is
