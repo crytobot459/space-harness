@@ -55,6 +55,9 @@ jobs:
         with:
           node-version: '22.x'
           registry-url: 'https://registry.npmjs.org'
+      - run: npm ci --no-audit --no-fund
+      # prepublishOnly rebuilds dist, so the install above is what provides
+      # the esbuild binary it runs with.
       - run: npm publish --provenance --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
