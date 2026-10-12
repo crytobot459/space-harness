@@ -441,6 +441,33 @@ say whether it is.
 contained 14 absolute paths resolving outside itself, one of them a real
 checkout the harness has workspace access to. The run needed `--sanitize`.
 
+### Aborted run at reps=3 (October 2026)
+
+The first attempt at a proper run over the 8-task suite stopped at run 17 of 48
+and produced no aggregate. Both figures below are why, not findings.
+
+```
+  read-control          on 3/3 cited    off 3/3 cited
+  read-multi-out        on 3/3 cited    off 2/3 (one answered with no citation)
+  read-multi-gate       on 3/3 cited    off 3/3 cited
+  read-multi-skills     on 1 cited      off 1 cited, then off-2 ESCAPED
+```
+
+The escape was a `grep` whose path was `/`. Nothing was written and nothing
+outside was changed; the arm searched the whole filesystem. The harness records
+any absolute path outside the run directory, read or write, and stops the entire
+run on the first one. That is the intended behaviour and it is also why this run
+cannot produce a number: an arm that occasionally reaches for `/` will end any
+repetition count at whatever it reaches on.
+
+Eight kit-on runs produced no escape. Eight kit-off runs produced one. That is
+not a rate, and nothing here should be read as one.
+
+Two things have to be decided before reps=3 means anything. Whether an arm that
+reaches outside the run directory is evidence about the kit or noise that should
+be recorded and stepped over, and whether the suite should contain a task that
+tempts a filesystem-wide search, since one that does will keep ending runs.
+
 ## The gate
 
 `npm run measure:check` fails when either the narrow-read share drops below 45%
